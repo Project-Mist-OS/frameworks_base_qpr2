@@ -619,9 +619,6 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
         if (mWallpaperDepthUtils != null) {
             mWallpaperDepthUtils.onGlanceableHubShowingChanged(idleOnCommunal);
         }
-        if (mMediaViewController != null) {
-            mMediaViewController.onGlanceableHubShowingChanged(idleOnCommunal);
-        }
     };
 
     private boolean mNoAnimationOnNextBarModeChange;
