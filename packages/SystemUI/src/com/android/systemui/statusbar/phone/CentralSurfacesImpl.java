@@ -321,6 +321,11 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
                     if (!SceneContainerFlag.isEnabled()) {
                         mScrimController.setKeyguardOccluded(occluded);
                     }
+                    if (getNotificationShadeWindowView() != null 
+                        && getNotificationShadeWindowView().getIosStyleNotificationHelper() != null) {
+                    getNotificationShadeWindowView().getIosStyleNotificationHelper()
+                            .onKeyguardStateChanged(mKeyguardStateController.isShowing());
+                    }
                 }
             };
 
@@ -1435,6 +1440,12 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
         depthWallpaperView.postDelayed(() -> {
             mWallpaperDepthUtils.updateDepthWallpaperVisibility();
         }, 500);
+
+        // Setup iOS-style notification reveal
+        ViewGroup notificationContainer = root.findViewById(R.id.shared_notification_container);
+           if (notificationContainer != null) {
+              getNotificationShadeWindowView().setNotificationContainerForIosStyle(notificationContainer);
+        }
 
         mLightRevealScrim.setScrimOpaqueChangedListener((opaque) -> {
             Runnable updateOpaqueness = () -> {
