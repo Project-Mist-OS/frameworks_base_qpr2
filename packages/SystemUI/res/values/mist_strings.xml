@@ -344,4 +344,12 @@
     <string name="quick_settings_smart_pixels_off">Off</string>
     <string name="smart_pixels_percent_label">Pixel percentage</string>
     <string name="smart_pixels_percent_format"><xliff:g id="percent" example="25">%d</xliff:g>%%</string>
+
+    <!-- OnePlus-style volume panel -->
+    <string name="volume_panel_style_title">Volume panel style</string>
+    <string name="volume_panel_style_summary">Choose the style for the volume panel</string>
+    <string name="volume_panel_style_default">Default</string>
+    <string name="volume_panel_style_oneplus">OnePlus</string>
+    <string name="volume_panel_system_volume">System volume</string>
+    <string name="volume_panel_settings">Settings</string>
 </resources>
