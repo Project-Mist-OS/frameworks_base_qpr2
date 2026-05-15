@@ -550,11 +550,15 @@ class MediaViewController @Inject constructor(
             .start()
     }
 
-    override fun onAlbumArtChanged(drawable: Drawable) {
+    override fun onAlbumArtChanged(drawable: Drawable?) {
         coroutineScope.launch {
             artworkDrawable = drawable
             updateMediaState()
         }
+    }
+
+    override fun onAppIconChanged(drawable: Drawable?) {
+        // App icon changed, but not used in MediaViewController.
     }
 
     override fun onPlaybackStateChanged(state: Int) {

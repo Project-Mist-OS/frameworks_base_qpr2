@@ -88,6 +88,7 @@ constructor(
     private val secureSettings: SecureSettings,
     private val globalSettings: GlobalSettings,
     private val secureLockDeviceInteractor: Lazy<SecureLockDeviceInteractor>,
+    private val mistHubController: com.android.systemui.mist.hub.MistHubController,
 ) : CoreStartable, KeyguardNotificationVisibilityProvider {
     private val showSilentNotifsUri =
         secureSettings.getUriFor(Settings.Secure.LOCK_SCREEN_SHOW_SILENT_NOTIFICATIONS)
@@ -203,6 +204,9 @@ constructor(
 
     override fun shouldHideNotification(entry: NotificationEntry): VisState =
         when {
+            // Mist Hub handles this notification, so hide it from the standard lockscreen list
+            mistHubController.isEnabled && mistHubController.isHandledByHub(entry.sbn) -> HIDE
+            
             // Show notifications if we're in a dream with overlay. The dream status bar needs
             // notifications to render ongoing call chip.
             OngoingActivityChipsOnDream.isEnabled && keyguardUpdateMonitor.isDreamingWithOverlay ->

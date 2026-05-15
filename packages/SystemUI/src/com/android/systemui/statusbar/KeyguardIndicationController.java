@@ -733,6 +733,11 @@ public class KeyguardIndicationController {
                 powerIndication += ",  " + (mChargingWattage / mCurrentDivider) + " mW";
             }
 
+            if (TextUtils.isEmpty(powerIndication)) {
+                mRotateTextViewController.hideIndication(INDICATION_TYPE_BATTERY);
+                return;
+            }
+
             mKeyguardLogger.logUpdateBatteryIndication(powerIndication, mPowerPluggedIn);
             mRotateTextViewController.updateIndication(
                     INDICATION_TYPE_BATTERY,
@@ -1383,6 +1388,12 @@ public class KeyguardIndicationController {
      * Assumption: device is charging
      */
     protected String computePowerIndication() {
+        boolean isMistHubEnabled = android.provider.Settings.System.getInt(
+                mContext.getContentResolver(), "mist_hub_enabled", 0) == 1;
+        if (isMistHubEnabled) {
+            return "";
+        }
+
         if (mBatteryDefender) {
             String percentage = NumberFormat.getPercentInstance().format(mBatteryLevel / 100f);
             return mContext.getResources().getString(

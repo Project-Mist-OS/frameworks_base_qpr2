@@ -26,6 +26,7 @@ import com.android.systemui.statusbar.notification.promoted.AutomaticPromotionCo
 import com.android.systemui.statusbar.notification.shared.NotificationBundleUi
 import com.android.systemui.statusbar.notification.shared.NotificationMinimalism
 import com.android.systemui.statusbar.notification.shared.NotificationSummarizationOnboardingUi
+import com.android.systemui.mist.hub.MistHubCoordinator
 import javax.inject.Inject
 
 /**
@@ -70,6 +71,7 @@ constructor(
     bundleCoordinator: BundleCoordinator,
     summarizationCoordinator: SummarizationCoordinator,
     automaticPromotionCoordinator: AutomaticPromotionCoordinator,
+    mistHubCoordinator: MistHubCoordinator,
 ) : NotifCoordinators {
 
     private val mCoreCoordinators: MutableList<CoreCoordinator> = ArrayList()
@@ -116,6 +118,7 @@ constructor(
             mCoordinators.add(summarizationCoordinator)
         }
         mCoordinators.add(statsLoggerCoordinator)
+        mCoordinators.add(mistHubCoordinator)
         // Manually add Ordered Sections
         if (NotificationMinimalism.isEnabled) {
             mOrderedSections.add(lockScreenMinimalismCoordinator.topOngoingSectioner) // Top Ongoing

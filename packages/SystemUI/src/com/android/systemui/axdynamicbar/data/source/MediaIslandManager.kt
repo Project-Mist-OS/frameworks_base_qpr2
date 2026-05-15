@@ -91,13 +91,13 @@ constructor(
             _mediaEvent.value = current.copy(mediaColor = color)
         }
 
-        override fun onAlbumArtChanged(drawable: Drawable) {
+        override fun onAlbumArtChanged(drawable: Drawable?) {
             sessionAlbumArt = drawable
             val current = _mediaEvent.value ?: return
             _mediaEvent.value = current.copy(albumArt = drawable)
         }
 
-        override fun onAppIconChanged(drawable: Drawable) {
+        override fun onAppIconChanged(drawable: Drawable?) {
             sessionAppIcon = drawable
             val current = _mediaEvent.value ?: return
             _mediaEvent.value = current.copy(appIcon = drawable)

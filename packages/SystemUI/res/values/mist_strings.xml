@@ -352,4 +352,9 @@
     <string name="volume_panel_style_oneplus">OnePlus</string>
     <string name="volume_panel_system_volume">System volume</string>
     <string name="volume_panel_settings">Settings</string>
+
+    <!-- Mist Hub  -->
+    <string name="mist_hub_charging_label">Charging</string>
+    <string name="mist_hub_music_label">Now Playing</string>
+    <string name="mist_hub_notification_label">Notification</string>
 </resources>
