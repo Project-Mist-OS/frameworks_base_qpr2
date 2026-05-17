@@ -243,6 +243,15 @@
     <item type="id" name="status_view_media_container" />
     <item type="id" name="weather_clock_bc_smartspace_bottom" />
 
+    <!-- Depth wallpaper subject overlay (DepthClockOverlayView) -->
+    <item type="id" name="depth_wallpaper_subject" />
+
+    <!-- Custom clock style view (ClockStyle) -->
+    <item type="id" name="clock_ls" />
+
+    <!-- Mist Hub keyguard chip -->
+    <item type="id" name="mist_hub_chip" />
+
     <!-- Privacy dialog -->
     <item type="id" name="privacy_dialog_close_app_button" />
     <item type="id" name="privacy_dialog_manage_app_button" />
