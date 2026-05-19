@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.systemui.depth
 
 import android.app.WallpaperManager
@@ -126,6 +127,24 @@ class DepthClockOverlayView @JvmOverloads constructor(
                 subjectBitmap?.recycle()
                 subjectBitmap = bitmap
                 visibility = if (bitmap != null) VISIBLE else INVISIBLE
+
+                if (bitmap != null) {
+                    this@DepthClockOverlayView.z = 2f
+                    (parent as? android.view.ViewGroup)?.let { parentView ->
+                        parentView.findViewById<android.view.View>(com.android.systemui.res.R.id.device_entry_icon_view)?.z = 3f
+                        parentView.findViewById<android.view.View>(com.android.systemui.res.R.id.ax_dynamic_bar_keyguard_chip)?.z = 3f
+                        for (i in 0 until parentView.childCount) {
+                            val child = parentView.getChildAt(i)
+                            if (child.javaClass.simpleName == "MistHubView" || child is com.android.systemui.mist.hub.MistHubView) {
+                                child.z = 3f
+                            }
+                        }
+                        parentView.findViewById<android.view.View>(com.android.systemui.res.R.id.ambient_indication_container)?.z = 3f
+                        parentView.findViewById<android.view.View>(com.android.systemui.res.R.id.keyguard_slice_view)?.z = 3f
+                        parentView.findViewById<android.view.View>(com.android.systemui.res.R.id.bc_smartspace_view)?.z = 3f
+                    }
+                }
+
                 invalidate()
             }
         }.start()
