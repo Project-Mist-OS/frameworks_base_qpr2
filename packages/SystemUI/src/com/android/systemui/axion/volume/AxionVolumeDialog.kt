@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 package com.android.systemui.axion.volume
 
 import android.content.Context
@@ -29,7 +31,6 @@ import androidx.compose.ui.platform.*
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.*
 import androidx.lifecycle.*
-import com.android.systemui.lifecycle.*
 import com.android.systemui.animation.*
 import com.android.systemui.axion.volume.ui.composable.*
 import com.android.systemui.axion.volume.ui.viewmodel.*
@@ -119,22 +120,38 @@ class AxionVolumeDialog @Inject constructor(
         private val compose = ComposeView(context).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
 
-            repeatWhenAttached { _: View ->
-                setContent {
-                    MaterialTheme(
-                        colorScheme = if (isSystemInDarkTheme())
-                            dynamicDarkColorScheme(LocalContext.current)
-                        else
-                            dynamicLightColorScheme(LocalContext.current)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .wrapContentSize()
-                                .padding(12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            VolumeStyleDispatcher(viewModel)
+            // Replaced repeatWhenAttached with standard Compose approach
+            setContent {
+                val lifecycleOwner = LocalLifecycleOwner.current
+                
+                DisposableEffect(lifecycleOwner) {
+                    val observer = LifecycleEventObserver { _, event ->
+                        if (event == Lifecycle.Event.ON_START) {
+                            // Dialog is visible
                         }
+                    }
+                    lifecycleOwner.lifecycle.addObserver(observer)
+                    
+                    onDispose {
+                        lifecycleOwner.lifecycle.removeObserver(observer)
+                    }
+                }
+                
+                MaterialExpressiveTheme(
+                    colorScheme = if (isSystemInDarkTheme()) {
+                        dynamicDarkColorScheme(LocalContext.current)
+                    } else {
+                        dynamicLightColorScheme(LocalContext.current)
+                    },
+                    MotionScheme.expressive()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .wrapContentSize()
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AxionVolumeDialogContent(viewModel)
                     }
                 }
             }
