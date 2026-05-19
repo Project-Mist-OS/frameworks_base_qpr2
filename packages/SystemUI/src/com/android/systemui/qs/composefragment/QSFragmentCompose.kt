@@ -855,10 +855,11 @@ constructor(
                             val internetTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "internet" }
                             val btTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "bt" }
 
-                            Box(modifier = Modifier.padding(top = 10.dp, bottom = 16.dp)) {
+                            Box(modifier = Modifier.padding(horizontal = 0.dp)) {
                                 Element(IosControlPanelElementKey, modifier = Modifier.fillMaxWidth().zIndex(1f)) {
                                     IosControlPanel(
                                         modifier = Modifier.fillMaxWidth(),
+                                        contentModifier = Modifier.padding(vertical = 6.dp),
                                         internetTile = internetTileVM,
                                         btTile = btTileVM
                                     )
@@ -936,14 +937,12 @@ constructor(
                         val btTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "bt" }
 
                         Box(
-                            modifier = Modifier.padding(
-                                horizontal = qsHorizontalMargin(),
-                                vertical = 4.dp,
-                            )
+                            modifier = Modifier.padding(horizontal = qsHorizontalMargin())
                         ) {
                             Element(IosControlPanelElementKey, modifier = Modifier.fillMaxWidth().zIndex(1f)) {
                                 IosControlPanel(
                                     modifier = Modifier.fillMaxWidth(),
+                                    contentModifier = Modifier.padding(vertical = 6.dp),
                                     internetTile = internetTileVM,
                                     btTile = btTileVM
                                 )
