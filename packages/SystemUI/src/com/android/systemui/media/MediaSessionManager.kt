@@ -39,6 +39,9 @@ class MediaSessionManager private constructor() {
     private var currentAlbumArt: Drawable? = null
 
     @Volatile
+    private var currentAppIcon: Drawable? = null
+
+    @Volatile
     private var currentMediaColor: Int? = null
 
     @Volatile
@@ -58,6 +61,7 @@ class MediaSessionManager private constructor() {
                 it.onPlaybackStateChanged(currentPlaybackState)
                 it.onMetadataChanged(trackTitle, artist)
                 currentAlbumArt?.let { art -> it.onAlbumArtChanged(art) }
+                currentAppIcon?.let { icon -> it.onAppIconChanged(icon) }
                 currentMediaColor?.let { color -> it.onMediaColorsChanged(color) }
             }
         }
