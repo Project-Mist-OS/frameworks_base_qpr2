@@ -35,8 +35,6 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * @hide
@@ -45,8 +43,6 @@ public class KeyBoxManager {
     private static final String TAG = "KeyBoxManager";
 
     private final Map<String, KeyBox> mKeyboxes = new ConcurrentHashMap<>();
-    
-    private static final Pattern PEM_HEADER = Pattern.compile("-----BEGIN ([^-]+)-----");
 
     /** @hide */
     public static class KeyBox {
@@ -89,8 +85,6 @@ public class KeyBoxManager {
             String currentAlgorithm = null;
             String privateKeyPem = null;
             List<String> certificatePems = new ArrayList<>();
-            StringBuilder privateKeyBuilder = null;
-            StringBuilder certBuilder = null;
             boolean inKey = false;
             boolean inPrivateKey = false;
             boolean inCertificateChain = false;
@@ -108,48 +102,30 @@ public class KeyBoxManager {
                             currentAlgorithm = parser.getAttributeValue(null, "algorithm");
                             privateKeyPem = null;
                             certificatePems.clear();
-                            privateKeyBuilder = null;
-                            certBuilder = null;
                         } else if ("PrivateKey".equals(tagName) && inKey) {
                             inPrivateKey = true;
-                            privateKeyBuilder = new StringBuilder();
                         } else if ("CertificateChain".equals(tagName) && inKey) {
                             inCertificateChain = true;
                         } else if ("Certificate".equals(tagName) && inCertificateChain) {
                             inCertificate = true;
-                            certBuilder = new StringBuilder();
                         }
                         break;
 
                     case XmlPullParser.TEXT:
-                        String text = parser.getText();
-                        if (text != null) {
-                            if (inPrivateKey && privateKeyBuilder != null) {
-                                privateKeyBuilder.append(text);
-                            } else if (inCertificate && certBuilder != null) {
-                                certBuilder.append(text);
+                        String text = parser.getText().trim();
+                        if (!text.isEmpty()) {
+                            if (inPrivateKey) {
+                                privateKeyPem = text;
+                            } else if (inCertificate) {
+                                certificatePems.add(text);
                             }
                         }
                         break;
 
                     case XmlPullParser.END_TAG:
                         if ("PrivateKey".equals(tagName)) {
-                            if (privateKeyBuilder != null) {
-                                String pem = privateKeyBuilder.toString().trim();
-                                if (!pem.isEmpty()) {
-                                    privateKeyPem = pem;
-                                }
-                                privateKeyBuilder = null;
-                            }
                             inPrivateKey = false;
                         } else if ("Certificate".equals(tagName)) {
-                            if (certBuilder != null) {
-                                String pem = certBuilder.toString().trim();
-                                if (!pem.isEmpty()) {
-                                    certificatePems.add(pem);
-                                }
-                                certBuilder = null;
-                            }
                             inCertificate = false;
                         } else if ("CertificateChain".equals(tagName)) {
                             inCertificateChain = false;
@@ -175,7 +151,6 @@ public class KeyBoxManager {
         try {
             String normalizedAlgorithm;
             switch (algorithm.toLowerCase()) {
-                case "ec":
                 case "ecdsa":
                     normalizedAlgorithm = "EC";
                     break;
@@ -208,80 +183,53 @@ public class KeyBoxManager {
     }
 
     private PrivateKey parsePrivateKey(String pem, String algorithm) throws Exception {
-        String pemType = detectPemType(pem);
         byte[] keyBytes = parsePemContent(pem);
-
-        if ("EC PRIVATE KEY".equals(pemType)
-                || ("EC".equals(algorithm) && pemType == null)) {
-            return parseEcPrivateKey(keyBytes, algorithm);
-        }
-
-        if ("RSA PRIVATE KEY".equals(pemType)
-                || ("RSA".equals(algorithm) && pemType == null)) {
-            return parseRsaPrivateKey(keyBytes);
-        }
-
-        if ("PRIVATE KEY".equals(pemType) || "ENCRYPTED PRIVATE KEY".equals(pemType)) {
-            PrivateKeyInfo pkInfo = PrivateKeyInfo.getInstance(keyBytes);
-            if ("RSA".equals(algorithm)) {
-                return new KeyFactorySpi().generatePrivate(pkInfo);
-            }
-            if ("EC".equals(algorithm)) {
-                return new EC().generatePrivate(pkInfo);
-            }
-            PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
-            return KeyFactory.getInstance(algorithm).generatePrivate(spec);
-        }
-
-        PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
-        return KeyFactory.getInstance(algorithm).generatePrivate(spec);
-    }
-
-    private PrivateKey parseEcPrivateKey(byte[] keyBytes, String algorithm) throws Exception {
-        try (ASN1InputStream asn1In = new ASN1InputStream(keyBytes)) {
-            ASN1Primitive asn1 = asn1In.readObject();
+        
+        ASN1InputStream asn1In = new ASN1InputStream(keyBytes);
+        ASN1Primitive asn1 = asn1In.readObject();
+        asn1In.close();
+        
+        if ("EC".equals(algorithm)) {
             try {
                 ECPrivateKey ecPrivateKey = ECPrivateKey.getInstance(asn1);
                 X9ECParameters ecParams = ECNamedCurveTable.getByOID(
-                        (ASN1ObjectIdentifier) ecPrivateKey.getParameters());
+                    (ASN1ObjectIdentifier) ecPrivateKey.getParameters());
                 ECDomainParameters domainParams = new ECDomainParameters(
-                        ecParams.getCurve(), ecParams.getG(), ecParams.getN(), ecParams.getH());
+                    ecParams.getCurve(), ecParams.getG(), ecParams.getN(), ecParams.getH());
                 ECPrivateKeyParameters privParams = new ECPrivateKeyParameters(
-                        ecPrivateKey.getKey(), domainParams);
-                return new BCECPrivateKey(algorithm, privParams, null);
+                    ecPrivateKey.getKey(), domainParams);
+                BCECPrivateKey bcKey = new BCECPrivateKey(algorithm, privParams, null);
+                return bcKey;
             } catch (Exception e) {
                 PrivateKeyInfo pkInfo = PrivateKeyInfo.getInstance(asn1);
-                return new EC().generatePrivate(pkInfo);
+                EC ecFactory = new EC();
+                return ecFactory.generatePrivate(pkInfo);
             }
-        }
-    }
-
-    private PrivateKey parseRsaPrivateKey(byte[] keyBytes) throws Exception {
-        try (ASN1InputStream asn1In = new ASN1InputStream(keyBytes)) {
-            ASN1Primitive asn1 = asn1In.readObject();
+        } else if ("RSA".equals(algorithm)) {
             try {
                 RSAPrivateKey rsaPrivateKey = RSAPrivateKey.getInstance(asn1);
                 RSAPrivateCrtKeySpec rsaSpec = new RSAPrivateCrtKeySpec(
-                        rsaPrivateKey.getModulus(),
-                        rsaPrivateKey.getPublicExponent(),
-                        rsaPrivateKey.getPrivateExponent(),
-                        rsaPrivateKey.getPrime1(),
-                        rsaPrivateKey.getPrime2(),
-                        rsaPrivateKey.getExponent1(),
-                        rsaPrivateKey.getExponent2(),
-                        rsaPrivateKey.getCoefficient());
-                return KeyFactory.getInstance("RSA").generatePrivate(rsaSpec);
+                    rsaPrivateKey.getModulus(),
+                    rsaPrivateKey.getPublicExponent(),
+                    rsaPrivateKey.getPrivateExponent(),
+                    rsaPrivateKey.getPrime1(),
+                    rsaPrivateKey.getPrime2(),
+                    rsaPrivateKey.getExponent1(),
+                    rsaPrivateKey.getExponent2(),
+                    rsaPrivateKey.getCoefficient()
+                );
+                KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+                return keyFactory.generatePrivate(rsaSpec);
             } catch (Exception e) {
                 PrivateKeyInfo pkInfo = PrivateKeyInfo.getInstance(asn1);
-                return new KeyFactorySpi().generatePrivate(pkInfo);
+                KeyFactorySpi rsaFactory = new KeyFactorySpi();
+                return rsaFactory.generatePrivate(pkInfo);
             }
         }
-    }
-
-    private String detectPemType(String pem) {
-        if (pem == null) return null;
-        Matcher m = PEM_HEADER.matcher(pem);
-        return m.find() ? m.group(1).trim().toUpperCase() : null;
+        
+        PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
+        KeyFactory keyFactory = KeyFactory.getInstance(algorithm);
+        return keyFactory.generatePrivate(spec);
     }
 
     private byte[] parsePemContent(String pem) {
@@ -300,7 +248,6 @@ public class KeyBoxManager {
                 content = content.substring(bom.length());
             }
         }
-        content = content.replaceAll("(?s)<!--.*?-->", "");
         return content.trim();
     }
 }
