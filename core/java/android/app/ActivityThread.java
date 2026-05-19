@@ -211,7 +211,6 @@ import android.util.SuperNotCalledException;
 import android.util.UtilConfig;
 import android.util.proto.ProtoOutputStream;
 import android.view.Choreographer;
-import android.view.animation.AnimationUtils;
 import android.view.Display;
 import android.view.SurfaceControl;
 import android.view.ThreadedRenderer;
@@ -256,6 +255,7 @@ import com.android.internal.os.SomeArgs;
 import com.android.internal.os.logging.MetricsLoggerWrapper;
 import com.android.internal.policy.DecorView;
 import com.android.internal.protolog.ProtoLog;
+import com.android.internal.util.mist.FontController;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.FastPrintWriter;
 import com.android.internal.util.Preconditions;
@@ -302,6 +302,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -426,6 +429,19 @@ public final class ActivityThread extends ClientTransactionHandler
     @UnsupportedAppUsage
     final H mH = new H();
     final Executor mExecutor = new HandlerExecutor(mH);
+
+    /**
+    * A single thread executor is sufficient, as we don't need to parallelize
+    * dumps within the same process. Using a single thread ensures dumps
+    * are processed in the order they are received.
+    */
+    private static final ExecutorService sDumpExecutor = Executors.newSingleThreadExecutor(
+            new ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    return new Thread(r, "dump-thread");
+                }
+            });
     /**
      * Maps from activity token to local record of running activities in this process.
      *
@@ -1591,12 +1607,15 @@ public final class ActivityThread extends ClientTransactionHandler
                 data.fd = pfd.dup();
                 data.token = servicetoken;
                 data.args = args;
-                sendMessage(H.DUMP_SERVICE, data, 0, 0, true /*async*/);
             } catch (IOException e) {
                 Slog.w(TAG, "dumpService failed", e);
             } finally {
                 IoUtils.closeQuietly(pfd);
             }
+            // Submit the actual dump work to the dedicated executor.
+            sDumpExecutor.execute(() -> {
+                handleDumpService(data);
+            });
         }
 
         // This function exists to make sure all receiver dispatching is
@@ -1664,7 +1683,10 @@ public final class ActivityThread extends ClientTransactionHandler
                 IoUtils.closeQuietly(fd);
             }
             dhd.finishCallback = finishCallback;
-            sendMessage(H.DUMP_HEAP, dhd, 0, 0, true /*async*/);
+            // Submit the actual dump work to the dedicated executor.
+            sDumpExecutor.execute(() -> {
+                handleDumpHeap(dhd);
+            });
         }
 
         @Override
@@ -1709,12 +1731,15 @@ public final class ActivityThread extends ClientTransactionHandler
             try {
                 data.fd = fd.dup();
                 data.finishCallback = callback;
-                sendMessage(H.DUMP_RESOURCES, data, 0, 0, false /*async*/);
             } catch (IOException e) {
                 Slog.w(TAG, "dumpResources failed", e);
             } finally {
                 IoUtils.closeQuietly(fd);
             }
+            // Submit the actual dump work to the dedicated executor.
+            sDumpExecutor.execute(() -> {
+                handleDumpResources(data);
+            });
         }
 
         @Override
@@ -1726,12 +1751,15 @@ public final class ActivityThread extends ClientTransactionHandler
                 data.token = activitytoken;
                 data.prefix = prefix;
                 data.args = args;
-                sendMessage(H.DUMP_ACTIVITY, data, 0, 0, true /*async*/);
             } catch (IOException e) {
                 Slog.w(TAG, "dumpActivity failed", e);
             } finally {
                 IoUtils.closeQuietly(pfd);
             }
+            // Submit the actual dump work to the dedicated executor.
+            sDumpExecutor.execute(() -> {
+                handleDumpActivity(data);
+            });
         }
 
         @Override
@@ -1742,12 +1770,15 @@ public final class ActivityThread extends ClientTransactionHandler
                 data.fd = pfd.dup();
                 data.token = providertoken;
                 data.args = args;
-                sendMessage(H.DUMP_PROVIDER, data, 0, 0, true /*async*/);
             } catch (IOException e) {
                 Slog.w(TAG, "dumpProvider failed", e);
             } finally {
                 IoUtils.closeQuietly(pfd);
             }
+            // Submit the actual dump work to the dedicated executor.
+            sDumpExecutor.execute(() -> {
+                handleDumpProvider(data);
+            });
         }
 
         @NeverCompile
@@ -2100,12 +2131,15 @@ public final class ActivityThread extends ClientTransactionHandler
                 data.fd = pfd.dup();
                 data.token = null;
                 data.args = args;
-                sendMessage(H.DUMP_GFXINFO, data, 0, 0, true /*async*/);
             } catch (IOException e) {
                 Slog.w(TAG, "dumpGfxInfo failed", e);
             } finally {
                 IoUtils.closeQuietly(pfd);
             }
+            // Submit the actual dump work to the dedicated executor.
+            sDumpExecutor.execute(() -> {
+                handleDumpGfxInfo(data);
+            });
         }
 
         @Override
@@ -2565,7 +2599,6 @@ public final class ActivityThread extends ClientTransactionHandler
         public static final int BIND_SERVICE            = 121;
         @UnsupportedAppUsage
         public static final int UNBIND_SERVICE          = 122;
-        public static final int DUMP_SERVICE            = 123;
         public static final int LOW_MEMORY              = 124;
         public static final int PROFILER_CONTROL        = 127;
         public static final int CREATE_BACKUP_AGENT     = 128;
@@ -2576,8 +2609,6 @@ public final class ActivityThread extends ClientTransactionHandler
         public static final int DISPATCH_PACKAGE_BROADCAST = 133;
         @UnsupportedAppUsage
         public static final int SCHEDULE_CRASH          = 134;
-        public static final int DUMP_HEAP               = 135;
-        public static final int DUMP_ACTIVITY           = 136;
         public static final int SLEEPING                = 137;
         public static final int SET_CORE_SETTINGS       = 138;
         public static final int UPDATE_PACKAGE_COMPATIBILITY_INFO = 139;
@@ -2603,8 +2634,6 @@ public final class ActivityThread extends ClientTransactionHandler
         public static final int ATTACH_STARTUP_AGENTS = 162;
         public static final int UPDATE_UI_TRANSLATION_STATE = 163;
         public static final int SET_CONTENT_CAPTURE_OPTIONS_CALLBACK = 164;
-        public static final int DUMP_GFXINFO = 165;
-        public static final int DUMP_RESOURCES = 166;
         public static final int TIMEOUT_SERVICE = 167;
         public static final int PING = 168;
 
@@ -2628,7 +2657,6 @@ public final class ActivityThread extends ClientTransactionHandler
                     case GC_WHEN_IDLE: return "GC_WHEN_IDLE";
                     case BIND_SERVICE: return "BIND_SERVICE";
                     case UNBIND_SERVICE: return "UNBIND_SERVICE";
-                    case DUMP_SERVICE: return "DUMP_SERVICE";
                     case LOW_MEMORY: return "LOW_MEMORY";
                     case PROFILER_CONTROL: return "PROFILER_CONTROL";
                     case CREATE_BACKUP_AGENT: return "CREATE_BACKUP_AGENT";
@@ -2637,8 +2665,6 @@ public final class ActivityThread extends ClientTransactionHandler
                     case REMOVE_PROVIDER: return "REMOVE_PROVIDER";
                     case DISPATCH_PACKAGE_BROADCAST: return "DISPATCH_PACKAGE_BROADCAST";
                     case SCHEDULE_CRASH: return "SCHEDULE_CRASH";
-                    case DUMP_HEAP: return "DUMP_HEAP";
-                    case DUMP_ACTIVITY: return "DUMP_ACTIVITY";
                     case SET_CORE_SETTINGS: return "SET_CORE_SETTINGS";
                     case UPDATE_PACKAGE_COMPATIBILITY_INFO:
                         return "UPDATE_PACKAGE_COMPATIBILITY_INFO";
@@ -2660,11 +2686,9 @@ public final class ActivityThread extends ClientTransactionHandler
                     case UPDATE_UI_TRANSLATION_STATE: return "UPDATE_UI_TRANSLATION_STATE";
                     case SET_CONTENT_CAPTURE_OPTIONS_CALLBACK:
                         return "SET_CONTENT_CAPTURE_OPTIONS_CALLBACK";
-                    case DUMP_GFXINFO: return "DUMP GFXINFO";
                     case INSTRUMENT_WITHOUT_RESTART: return "INSTRUMENT_WITHOUT_RESTART";
                     case FINISH_INSTRUMENTATION_WITHOUT_RESTART:
                         return "FINISH_INSTRUMENTATION_WITHOUT_RESTART";
-                    case DUMP_RESOURCES: return "DUMP_RESOURCES";
                     case TIMEOUT_SERVICE: return "TIMEOUT_SERVICE";
                     case PING: return "PING";
                     case TIMEOUT_SERVICE_FOR_TYPE: return "TIMEOUT_SERVICE_FOR_TYPE";
@@ -2837,12 +2861,6 @@ public final class ActivityThread extends ClientTransactionHandler
                         Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
                     }
                     break;
-                case DUMP_SERVICE:
-                    handleDumpService((DumpComponentInfo)msg.obj);
-                    break;
-                case DUMP_GFXINFO:
-                    handleDumpGfxInfo((DumpComponentInfo) msg.obj);
-                    break;
                 case LOW_MEMORY:
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "lowMemory");
                     handleLowMemory();
@@ -2882,18 +2900,6 @@ public final class ActivityThread extends ClientTransactionHandler
                     throwRemoteServiceException(message, msg.arg1, extras);
                     break;
                 }
-                case DUMP_HEAP:
-                    handleDumpHeap((DumpHeapData) msg.obj);
-                    break;
-                case DUMP_RESOURCES:
-                    handleDumpResources((DumpResourcesData) msg.obj);
-                    break;
-                case DUMP_ACTIVITY:
-                    handleDumpActivity((DumpComponentInfo)msg.obj);
-                    break;
-                case DUMP_PROVIDER:
-                    handleDumpProvider((DumpComponentInfo)msg.obj);
-                    break;
                 case SET_CORE_SETTINGS:
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "setCoreSettings");
                     handleSetCoreSettings((Bundle) msg.obj);
@@ -7939,7 +7945,7 @@ public final class ActivityThread extends ClientTransactionHandler
                 false /* securityViolation */, true /* includeCode */,
                 false /* registerPackage */, isSdkSandbox);
 
-        Typeface.changeFont();
+         Typeface.changeFont();
 
         if (isSdkSandbox) {
             data.info.setSdkSandboxStorage(data.sdkSandboxClientAppVolumeUuid,
@@ -8014,7 +8020,7 @@ public final class ActivityThread extends ClientTransactionHandler
         final ContextImpl appContext = ContextImpl.createAppContext(this, data.info);
         mConfigurationController.updateLocaleListFromAppContext(appContext);
 
-        GamePropsSpoofService.getInstance().spoofForPackage(data.appInfo.packageName, appContext);
+        GamePropsSpoofService.getInstance().spoofForPackage(data.appInfo.packageName);
 
         PlayIntegritySpoofService pifService = PlayIntegritySpoofService.getInstance();
         if (pifService.shouldSpoof(data.processName)) {
@@ -8187,16 +8193,6 @@ public final class ActivityThread extends ClientTransactionHandler
                 }
             } catch (RemoteException e) {
                 throw e.rethrowFromSystemServer();
-            }
-        }
-
-        if (!Process.isIsolated()) {
-            try {
-                if (AnimationUtils.sPerfAnimEnabled) {
-                    AnimationUtils.ActivityAnimations.preload();
-                }
-            } catch (Exception e) {
-                Slog.e(TAG, "Failed to preload animations", e);
             }
         }
 
@@ -8552,11 +8548,6 @@ public final class ActivityThread extends ClientTransactionHandler
             }
         }
         if (holder == null) {
-            if (UserManager.get(c).isUserUnlocked(userId)) {
-                Slog.e(TAG, "Failed to find provider info for " + auth);
-            } else {
-                Slog.w(TAG, "Failed to find provider info for " + auth + " (user not unlocked)");
-            }
             return null;
         }
 

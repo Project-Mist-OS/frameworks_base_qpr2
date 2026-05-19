@@ -57,6 +57,7 @@ import android.ravenwood.annotation.RavenwoodKeepWholeClass;
 import android.ravenwood.annotation.RavenwoodRedirect;
 import android.ravenwood.annotation.RavenwoodRedirectionClass;
 import android.ravenwood.annotation.RavenwoodReplace;
+import android.security.gameprops.GamePropsSpoofService;
 import android.util.AndroidRuntimeException;
 import android.util.Log;
 import android.view.Display;
@@ -1362,6 +1363,7 @@ public class Instrumentation {
                 .instantiateApplication(cl, className);
         app.attach(context);
         PixelPropsUtils.setProps(context);
+        GamePropsSpoofService.getInstance().applyPerAppSpoofFromContext(context);
         return app;
     }
     
@@ -1381,6 +1383,7 @@ public class Instrumentation {
         Application app = (Application)clazz.newInstance();
         app.attach(context);
         PixelPropsUtils.setProps(context);
+        GamePropsSpoofService.getInstance().applyPerAppSpoofFromContext(context);
         return app;
     }
 
