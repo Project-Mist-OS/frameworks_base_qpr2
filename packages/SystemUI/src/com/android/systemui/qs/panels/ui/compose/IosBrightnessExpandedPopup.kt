@@ -92,7 +92,6 @@ fun IosBrightnessExpandedPopup(
 
     var isDarkMode by remember { mutableStateOf(uiModeManager.nightMode == UiModeManager.MODE_NIGHT_YES) }
     var isNightMode by remember { mutableStateOf(colorDisplayManager.isNightDisplayActivated) }
-    var isSmartPixels by remember { mutableStateOf(Settings.System.getIntForUser(cr, Settings.System.SMART_PIXELS_ENABLE, 0, UserHandle.USER_CURRENT) == 1) }
     var isAutoBrightness by remember { mutableStateOf(Settings.System.getIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, 0, UserHandle.USER_CURRENT) == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC) }
 
     Dialog(
@@ -197,15 +196,6 @@ fun IosBrightnessExpandedPopup(
                         onClick = {
                             isNightMode = !isNightMode
                             colorDisplayManager.isNightDisplayActivated = isNightMode
-                        }
-                    )
-                    IosPopupToggle(
-                        iconRes = R.drawable.ic_qs_smart_pixels,
-                        label = "Smart Pixels",
-                        isActive = isSmartPixels,
-                        onClick = {
-                            isSmartPixels = !isSmartPixels
-                            Settings.System.putIntForUser(cr, Settings.System.SMART_PIXELS_ENABLE, if (isSmartPixels) 1 else 0, UserHandle.USER_CURRENT)
                         }
                     )
                 }
