@@ -17,9 +17,11 @@
 package android.security.gameprops;
 
 import android.app.ActivityManager;
+import android.app.IActivityManager;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.os.Build;
+import android.os.Process;
 import android.os.RemoteException;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -62,11 +64,11 @@ public final class GamePropsSpoofService {
     // -------------------------------------------------------------------------
 
     /** Comma-separated "pkg:profileId" pairs for the active per-app spoof map. */
-    private static final String SETTING_PER_APPS        = "per_apps_device_spoof";
+    private static final String SETTING_PER_APPS         = "per_apps_device_spoof";
     /** Master enable flag for per-app spoofing (int, default 1). */
     private static final String SETTING_PER_APPS_ENABLED = "per_apps_device_spoof_enabled";
     /** JSON array of custom user-defined profiles. */
-    private static final String SETTING_CUSTOM_PROFILES = "custom_spoof_profiles";
+    private static final String SETTING_CUSTOM_PROFILES  = "custom_spoof_profiles";
 
     // -------------------------------------------------------------------------
     // Singleton
@@ -77,12 +79,18 @@ public final class GamePropsSpoofService {
     private GamePropsSpoofService() {}
 
     /** @hide */
-    public static synchronized GamePropsSpoofService getInstance() {
-        if (sInstance == null) {
-            sInstance = new GamePropsSpoofService();
-            sInstance.loadConfig();
+    public static GamePropsSpoofService getInstance() {
+        GamePropsSpoofService instance;
+        synchronized (GamePropsSpoofService.class) {
+            if (sInstance == null) {
+                sInstance = new GamePropsSpoofService();
+            }
+            instance = sInstance;
         }
-        return sInstance;
+        if (!instance.mConfigLoaded) {
+            instance.loadConfig();
+        }
+        return instance;
     }
 
     // -------------------------------------------------------------------------
@@ -101,7 +109,7 @@ public final class GamePropsSpoofService {
     // -------------------------------------------------------------------------
 
     /**
-     * Built-in named profiles.  Keys match the profile IDs used by
+     * Built-in named profiles. Keys match the profile IDs used by
      * UserSelectedAppSpoofSettings / PerAppsPropsUtils.
      *
      * @hide
@@ -110,30 +118,33 @@ public final class GamePropsSpoofService {
 
     static {
         BUILTIN_PROFILES = new HashMap<>();
-        BUILTIN_PROFILES.put("BS4C",    profile("Black Shark", "2SM-X706B",   "Xiaomi",  "2SM-X706B",   "BlackShark/PRS-H0/Black Shark 4:13/TQ3A.230805.001/20230315:user/release-keys",                                    "2SM-X706B"));
-        BUILTIN_PROFILES.put("F5",      profile("Xiaomi",      "23049PCD8G",  "Xiaomi",  "marble",      "Xiaomi/marble_global/marble:14/UKQ1.230917.001/V816.0.2.0.UMRMIXM:user/release-keys",                            "marble"));
-        BUILTIN_PROFILES.put("GZF5",    profile("samsung",     "SM-F9460",    "samsung", "Galaxy Z Fold 5", "samsung/q2qzh/q2q:15/UP1A.231005.007/F946BXXU1BWK4:user/release-keys",                                       "SM-F9460"));
-        BUILTIN_PROFILES.put("HMV2R",   profile("HONOR",       "VER-N49DP",   "HONOR",   "Honor Magic V2 RSR", "HONOR/VER-N49DP/VER:13/ENG.20240918.123456:user/release-keys",                                            "VER-N49DP"));
-        BUILTIN_PROFILES.put("LY700",   profile("Lenovo",      "Lenovo TB-9707F", "Lenovo", "Lenovo Y700", null,                                                                                                           null));
-        BUILTIN_PROFILES.put("LY70023", profile("Lenovo",      "TB-9707F",    "Lenovo",  "Legion Y700 (2023)", "Lenovo/TB-9707F/Lenovo TB-9707F:13/TQ3A.230805.001/20230901:user/release-keys",                          "TB-9707F"));
-        BUILTIN_PROFILES.put("MI11TP",  profile("Xiaomi",      "2107113SG",   "Xiaomi",  "Xiaomi 11T Pro", "Xiaomi/2107113SI/Mi 11T Pro:13/RKQ1.211001.001/20230410:user/release-keys",                                  "2107113SG"));
-        BUILTIN_PROFILES.put("MI13",    profile("Xiaomi",      "2211133G",    "Xiaomi",  "Xiaomi 13",   "Xiaomi/fuxi_eea/fuxi:13/TKQ1.221114.001/OS2.0.102.0.VMCEUXM:user/release-keys",                                 "2211133G"));
-        BUILTIN_PROFILES.put("MI13P",   profile("Xiaomi",      "2210132G",    "Xiaomi",  "Xiaomi 13 Pro", "Xiaomi/fuxi_eea/fuxi:13/TKQ1.221114.001/OS2.0.102.0.VMCEUXM:user/release-keys",                              "2210132G"));
-        BUILTIN_PROFILES.put("MI14P",   profile("Xiaomi",      "23116PN5BC",  "Xiaomi",  "houji",       "Xiaomi/houji/houji:14/UKQ1.230917.001/V816.0.2.0.UNBCNXM:user/release-keys",                                   "houji"));
-        BUILTIN_PROFILES.put("OP12",    profile("OnePlus",     "CPH2581",     "OnePlus", "OP594DL1",    "OnePlus/OP594DL1/OP594DL1:14/UKQ1.230917.001/1702951307528:user/release-keys",                                  "OP594DL1"));
-        BUILTIN_PROFILES.put("OP13",    profile("OnePlus",     "PJZ110",      "OnePlus", "OnePlus 13",  "OnePlus/PJZ110/OP5D0DL1:15/AP3A.240617.008/V.1bd19a1-1-2:user/release-keys",                                   "PJZ110"));
-        BUILTIN_PROFILES.put("OP8P5G",  profile("OnePlus",     "IN2023",      "OnePlus", "OnePlus 8 Pro 5G", "OnePlus/IN2023/OnePlus8Pro:13/RKQ1.211119.001/20230501:user/release-keys",                                 "IN2023"));
-        BUILTIN_PROFILES.put("PXL",     profile("google",      "marlin",      "Google",  "Pixel XL",    "google/marlin/marlin:10/QP1A.191005.007.A3/5972272:user/release-keys",                                          "marlin"));
-        BUILTIN_PROFILES.put("PXL10PXL",profile("google",      "Pixel 10 Pro XL", "Google", "mustang", "google/mustang/mustang:16/CP1A.260305.018/14887507:user/release-keys",                                           "mustang"));
-        BUILTIN_PROFILES.put("RM9P",    profile("nubia",       "NX769J",      "ZTE",     "REDMAGIC 9 Pro", "nubia/NX769J/NX769J:14/UKQ1.230917.001/20240813.173312:user/release-keys",                                  "NX769J"));
-        BUILTIN_PROFILES.put("RM10P",   profile("nubia",       "NX789J",      "ZTE",     "RedMagic 10 Pro", "nubia/NX789J-UN/NX789J:15/AQ3A.240812.002/20241212.194919:user/release-keys",                              "NX789J"));
-        BUILTIN_PROFILES.put("RM15P5G", profile("realme",      "RMX5101",     "realme",  "Realme 15 Pro 5G", "realme/RMX5101IN/RE60B4L1:15/AP3A.240617.008/V.R4T2.26cec0e-80bb4e-80b757:user/release-keys",            "RMX5101"));
-        BUILTIN_PROFILES.put("RMX14",   profile("realme",      "RMX5070",     "realme",  "Realme 14",   null,                                                                                                             null));
-        BUILTIN_PROFILES.put("RMP35G",  profile("realme",      "RMX5070",     "realme",  "Realme P3 5G", "realme/RMX5070/RMX5070:15/SKQ1.230119.001/eng.user.20250415.155201:user/release-keys",                        "RMX5070"));
-        BUILTIN_PROFILES.put("ROG6DU",  profile("ASUS",        "AI2203",      "ASUS",    "ROG Phone 6D Ultimate", "ASUS/AI2203/ROG Phone 6D:14/UP1A.231005.007/20240315:user/release-keys",                             "AI2203"));
-        BUILTIN_PROFILES.put("ROG8P",   profile("asus",        "ASUS_AI2401_D", "asus",  "ASUS_AI2401_D", "asus/ASUS_AI2401_D/ASUS_AI2401:14/UKQ1.230804.001/34.0210.0210.222-0:user/release-keys",                   "ASUS_AI2401_D"));
-        BUILTIN_PROFILES.put("ROG9P",   profile("Asus",        "ASUS_AI2501",  "Asus",   "ROG Phone 9 PRO", null,                                                                                                        null));
-        BUILTIN_PROFILES.put("S25U",    profile("Samsung",     "SM-S938B",    "samsung", "Samsung S25 Ultra", null,                                                                                                       null));
+        Object[][] entries = {
+            // key          brand          model               manufacturer    device             fingerprint                                                                                                product
+            { "BS4C",     "Black Shark", "2SM-X706B",         "Xiaomi",       "2SM-X706B",       "BlackShark/PRS-H0/Black Shark 4:13/TQ3A.230805.001/20230315:user/release-keys",                       "2SM-X706B"   },
+            { "F5",       "POCO",        "23049PCD8G",        "Xiaomi",       "marble",          "POCO/marble_global/marble:15/AQ3A.250226.002/OS3.0.3.0.VMRMIXM:user/release-keys",                    "marble"      },
+            { "S25U",     "samsung",     "SM-S938B",          "samsung",      "pa3q",            "samsung/pa3qxxx/pa3q:15/AP3A.240905.015.A2/S938BXXU9CZDP:user/release-keys",                          "pa3qxxx"     },
+            { "GZF5",     "samsung",     "SM-F9460",          "samsung",      "q2q",             "samsung/q2qzh/q2q:15/UP1A.231005.007/F946BXXU1BWK4:user/release-keys",                                "q2qxxx"    },
+            { "HMV2R",    "HONOR",       "VER-N49DP",         "HONOR",        "VER",             "HONOR/VER-N49DP/VER:13/ENG.20240918.123456:user/release-keys",                                        "VER-N49DP"   },
+            { "LY70023",  "Lenovo",      "Lenovo TB-9707F",   "lenovo",       "TB-9707F",        "Lenovo/TB-9707F_PRC/TB-9707F:13/TKQ1.221013.002/15.0.342_231018:user/release-keys",                   "TB-9707F"    },
+            { "MI11TP",   "Xiaomi",      "2107113SG",         "Xiaomi",       "vili",            "Xiaomi/vili_global/vili:14/UKQ1.231207.002/V816.0.22.0.UKDMIXM:user/release-keys",                    "vili"        },
+            { "MI13",     "Xiaomi",      "2211133G",          "Xiaomi",       "fuxi",            "Xiaomi/fuxi_global/fuxi:14/UKQ1.230804.001/V816.0.3.0.UMCMIXM:user/release-keys",                     "fuxi"        },
+            { "MI13P",    "Xiaomi",      "2210132G",          "Xiaomi",       "nuwa",            "Xiaomi/nuwa_global/nuwa:13/TKQ1.221114.001/OS2.0.100.0.VMBMIXM:user/release-keys",                    "nuwa"        },
+            { "MI14P",    "Xiaomi",      "23116PN5BC",        "Xiaomi",       "shennong",        "Xiaomi/shennong/shennong:15/AQ3A.240627.003/OS2.0.202.0.VNBCNXM:user/release-keys",                   "shennong"    },
+            { "OP12",     "OnePlus",     "CPH2581",           "OnePlus",      "OP594DL1",        "OnePlus/OP594DL1/OP594DL1:14/UKQ1.230917.001/1702951307528:user/release-keys",                        "OP594DL1"    },
+            { "OP13",     "OnePlus",     "PJZ110",            "OnePlus",      "OP5D0DL1",        "OnePlus/PJZ110/OP5D0DL1:15/AP3A.240617.008/V.1bd19a1-1-2:user/release-keys",                          "PJZ110"      },
+            { "PXL10PXL", "google",      "Pixel 10 Pro XL",   "Google",       "mustang",         "google/mustang/mustang:16/CP1A.260505.005/15081906:user/release-keys",                                "mustang"     },
+            { "RM9P",     "nubia",       "NX769J",            "ZTE",          "NX769J",          "nubia/NX769J/NX769J:14/UKQ1.230917.001/20240813.173312:user/release-keys",                            "NX769J"      },
+            { "RM10P",    "nubia",       "NX789J",            "ZTE",          "NX789J",          "nubia/NX789J-UN/NX789J:15/AQ3A.240812.002/20241212.194919:user/release-keys",                         "NX789J"      },
+            { "RM15P5G",  "realme",      "RMX5101",           "realme",       "RE60B4L1",        "realme/RMX5101IN/RE60B4L1:15/AP3A.240617.008/V.R4T2.26cec0e-80bb4e-80b757:user/release-keys",         "RMX5101"     },
+            { "ROG9P",    "asus",        "ASUSAI2501",        "asus",         "ASUSAI2501",      "asus/WWAI2501/ASUSAI2501:15/AQ3A.240829.003/35.1810.1810.346-0:user/release-keys",                    "ASUSAI2501"  },
+        };
+        for (Object[] e : entries) {
+            BUILTIN_PROFILES.put(
+                (String) e[0],
+                profile((String) e[1], (String) e[2], (String) e[3],
+                        (String) e[4], (String) e[5], (String) e[6])
+            );
+        }
     }
 
     /** Convenience builder for a profile map. Null fp/product are skipped. */
@@ -155,14 +166,21 @@ public final class GamePropsSpoofService {
 
     /** @hide */
     public void loadConfig() {
-        mGameConfigs.clear();
+        // Reset volatile flags first so concurrent readers see a consistent
+        // "not loaded" state while we rebuild.
         mEnabled      = false;
         mConfigLoaded = false;
 
+        IActivityManager am = ActivityManager.getService();
+        if (am == null) {
+            Log.w(TAG, "ActivityManager not ready, skipping gameprops config load");
+            return;
+        }
+
         String content;
         try {
-            content = ActivityManager.getService().getSpoofGamePropsConfig();
-        } catch (RemoteException e) {
+            content = am.getSpoofGamePropsConfig();
+        } catch (Throwable e) {
             Log.e(TAG, "Failed to fetch gameprops config from system_server", e);
             return;
         }
@@ -173,26 +191,32 @@ public final class GamePropsSpoofService {
         }
 
         try {
+            // Parse into a fresh local map; swap atomically so concurrent
+            // readers never see a half-cleared ConcurrentHashMap.
             parseJson(content);
             mConfigLoaded = true;
             Log.i(TAG, "Game props config loaded, games=" + mGameConfigs.size()
                     + ", enabled=" + mEnabled);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             Log.e(TAG, "Failed to parse game props config", e);
         }
     }
 
     private void parseJson(String content) {
+        boolean enabled = false;
+        boolean debug   = false;
+        final Map<String, Map<String, String>> newConfigs = new HashMap<>();
+
         try (JsonReader reader = new JsonReader(new StringReader(content))) {
             reader.beginObject();
             while (reader.hasNext()) {
                 String key = reader.nextName();
                 if ("enabled".equals(key)) {
-                    mEnabled = reader.nextBoolean();
+                    enabled = reader.nextBoolean();
                 } else if ("debug".equals(key)) {
-                    mDebug = reader.nextBoolean();
+                    debug = reader.nextBoolean();
                 } else if ("games".equals(key)) {
-                    parseGames(reader);
+                    parseGames(reader, newConfigs);
                 } else {
                     reader.skipValue();
                 }
@@ -200,21 +224,33 @@ public final class GamePropsSpoofService {
             reader.endObject();
         } catch (Exception e) {
             Log.e(TAG, "Failed to parse JSON config", e);
+            return;
         }
+
+        mEnabled = enabled;
+        mDebug   = debug;
+        mGameConfigs.clear();
+        mGameConfigs.putAll(newConfigs);
     }
 
-    private void parseGames(JsonReader reader) throws IOException {
+    private void parseGames(JsonReader reader, Map<String, Map<String, String>> out)
+            throws IOException {
         reader.beginObject();
         while (reader.hasNext()) {
             String packageName = reader.nextName();
             Map<String, String> gameProps = new HashMap<>();
-            reader.beginObject();
-            while (reader.hasNext()) {
-                gameProps.put(reader.nextName(), reader.nextString());
+            try {
+                reader.beginObject();
+                while (reader.hasNext()) {
+                    gameProps.put(reader.nextName(), reader.nextString());
+                }
+                reader.endObject();
+            } catch (Exception e) {
+                Log.w(TAG, "Skipping malformed game-props entry for " + packageName, e);
+                continue;
             }
-            reader.endObject();
             if (!gameProps.isEmpty()) {
-                mGameConfigs.put(packageName, gameProps);
+                out.put(packageName, gameProps);
                 if (mDebug) Log.d(TAG, "Loaded config for " + packageName
                         + ": " + gameProps.size() + " props");
             }
@@ -227,18 +263,15 @@ public final class GamePropsSpoofService {
     // -------------------------------------------------------------------------
 
     /**
-     * Apply spoofing for the given package.
-     *
-     * Checks JSON game-props first (source 1). If no entry is found there,
-     * falls back to the per-app Settings.Secure map (source 2) when a Context
-     * is supplied.
+     * Apply game-props spoofing (source 1) for the given package.
+     * Per-app spoofing (source 2) is handled separately via
+     * applyPerAppSpoofFromContext() at Instrumentation time.
      *
      * @hide
      */
-    public void spoofForPackage(String packageName, Context context) {
+    public void spoofForPackage(String packageName) {
         if (packageName == null) return;
 
-        // Source 1 — JSON game-props config
         if (mEnabled && mConfigLoaded) {
             Map<String, String> gameProps = mGameConfigs.get(packageName);
             if (gameProps != null && !gameProps.isEmpty()) {
@@ -246,24 +279,26 @@ public final class GamePropsSpoofService {
                 for (Map.Entry<String, String> entry : gameProps.entrySet()) {
                     spoofField(entry.getKey(), entry.getValue(), packageName);
                 }
-                return; // source 1 wins; skip per-app lookup
             }
-        }
-
-        // Source 2 — per-app Settings.Secure map (formerly PerAppsPropsUtils)
-        if (context != null) {
-            applyPerAppSpoof(packageName, context);
         }
     }
 
     /**
-     * Convenience overload for callers that only have the JSON game-props path
-     * (no Context available).
+     * Called from Instrumentation.newApplication once the app Context is fully
+     * ready and the ContentResolver can safely reach SettingsProvider.
+     * Skipped for isolated processes and for packages already handled by the
+     * JSON game-props source.
      *
      * @hide
      */
-    public void spoofForPackage(String packageName) {
-        spoofForPackage(packageName, null);
+    public void applyPerAppSpoofFromContext(Context context) {
+        if (context == null) return;
+        if (Process.isIsolated()) return;
+        String packageName = context.getPackageName();
+        if (TextUtils.isEmpty(packageName)) return;
+        // Source 1 already applied — don't double-spoof
+        if (mEnabled && mConfigLoaded && mGameConfigs.containsKey(packageName)) return;
+        applyPerAppSpoof(packageName, context);
     }
 
     // -------------------------------------------------------------------------
@@ -271,12 +306,14 @@ public final class GamePropsSpoofService {
     // -------------------------------------------------------------------------
 
     private void applyPerAppSpoof(String packageName, Context context) {
+        if (TextUtils.isEmpty(packageName) || context == null) return;
+
         // Check master enable flag
         try {
             int enabled = Settings.Secure.getInt(
                     context.getContentResolver(), SETTING_PER_APPS_ENABLED, 1);
             if (enabled == 0) return;
-        } catch (Exception e) {
+        } catch (Throwable e) {
             if (mDebug) Log.d(TAG, "Could not read per-apps enabled flag: " + e.getMessage());
             return;
         }
@@ -286,7 +323,7 @@ public final class GamePropsSpoofService {
         try {
             spoofedApps = Settings.Secure.getString(
                     context.getContentResolver(), SETTING_PER_APPS);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             if (mDebug) Log.d(TAG, "Failed to read per-apps setting: " + e.getMessage());
             return;
         }
@@ -331,7 +368,7 @@ public final class GamePropsSpoofService {
         try {
             json = Settings.Secure.getString(
                     context.getContentResolver(), SETTING_CUSTOM_PROFILES);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             return;
         }
         if (TextUtils.isEmpty(json)) return;
@@ -377,7 +414,8 @@ public final class GamePropsSpoofService {
             }
 
             field.setAccessible(true);
-            String oldValue = String.valueOf(field.get(null));
+            Object rawOld = field.get(null);
+            String oldValue = (rawOld != null) ? rawOld.toString() : "";
             if (value.equals(oldValue)) {
                 if (mDebug) Log.d(TAG, "[" + fieldName + "]: " + value + " (unchanged)");
                 return;
