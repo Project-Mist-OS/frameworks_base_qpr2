@@ -87,13 +87,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Entry point – reads the Settings toggle that enables/disables the panel
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Composable
 fun IosControlPanel(
     modifier: Modifier = Modifier,
+    contentModifier: Modifier = Modifier,
     internetTile: TileViewModel? = null,
     btTile: TileViewModel? = null,
 ) {
@@ -128,25 +125,21 @@ fun IosControlPanel(
         exit  = shrinkVertically(tween(250)) + fadeOut(tween(250)),
         modifier = modifier,
     ) {
-        IosControlPanelContent(internetTile, btTile)
+        IosControlPanelContent(internetTile, btTile, contentModifier)
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Core content – detects music playback and chooses layout accordingly
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun IosControlPanelContent(
     internetTile: TileViewModel? = null,
-    btTile: TileViewModel? = null
+    btTile: TileViewModel? = null,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val sessionManager = remember {
         context.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
     }
 
-    // Live music-playing detection (STATE_PLAYING only – paused = not show)
     var isMusicPlaying by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -164,7 +157,9 @@ private fun IosControlPanelContent(
                     ps != null && ps != PlaybackState.STATE_NONE && ps != PlaybackState.STATE_STOPPED && ps != PlaybackState.STATE_ERROR
                 }
 
-                if (active == null) {
+                val sessionToListen = active ?: sessions.firstOrNull()
+
+                if (sessionToListen == null) {
                     controllerCallback?.let { cb -> currentController?.unregisterCallback(cb) }
                     currentController = null
                     controllerCallback = null
@@ -172,9 +167,9 @@ private fun IosControlPanelContent(
                     return
                 }
 
-                if (currentController != active) {
+                if (currentController != sessionToListen) {
                     controllerCallback?.let { cb -> currentController?.unregisterCallback(cb) }
-                    currentController = active
+                    currentController = sessionToListen
                     val cb = object : MediaController.Callback() {
                         override fun onPlaybackStateChanged(state: PlaybackState?) {
                             refreshActiveSessions()
@@ -183,7 +178,7 @@ private fun IosControlPanelContent(
                             refreshActiveSessions()
                         }
                     }
-                    active.registerCallback(cb)
+                    sessionToListen.registerCallback(cb)
                     controllerCallback = cb
                 }
 
@@ -210,13 +205,12 @@ private fun IosControlPanelContent(
     val panelHeight = 160.dp
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(panelHeight)
             .padding(horizontal = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // ── LEFT SIDE: Music & Connectivity ───────────────────────────────────
         Box(modifier = Modifier.weight(2.5f).fillMaxHeight()) {
             if (isMusicPlaying) {
                 val pagerState = rememberPagerState { 2 }
@@ -241,7 +235,6 @@ private fun IosControlPanelContent(
                         }
                     }
 
-                    // Page indicator dots
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -283,7 +276,6 @@ private fun IosControlPanelContent(
             }
         }
 
-        // ── RIGHT SIDE: Sliders (Always visible) ──────────────────────────────
         IosVerticalBrightnessSlider(
             modifier = Modifier.weight(0.7f).fillMaxHeight().widthIn(max = 68.dp)
         )
@@ -292,10 +284,6 @@ private fun IosControlPanelContent(
         )
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Page 1 / standalone: Internet + Bluetooth tile row
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun IosConnectivityTilesPage(
@@ -323,10 +311,6 @@ private fun IosConnectivityTilesPage(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Live Wi-Fi Toggle Tile
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Composable
 fun IosInternetTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifier) {
     if (tileVM != null) {
@@ -340,8 +324,8 @@ fun IosInternetTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifier
         val isActive = state.state == Tile.STATE_ACTIVE
         IosConnectivityTile(
             icon = if (isActive) Icons.Filled.Wifi else Icons.Filled.WifiOff,
-            label = state.label?.toString() ?: "Internet",
-            sublabel = state.secondaryLabel?.toString() ?: "",
+            label = "Internet",
+            sublabel = if (isActive) state.secondaryLabel?.toString()?.takeIf { it.isNotBlank() } ?: state.label?.toString() ?: "On" else "Off",
             isActive = isActive,
             modifier = modifier,
             onClick = {
@@ -351,7 +335,6 @@ fun IosInternetTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifier
         return
     }
 
-    // Fallback if no VM is provided
     val context = LocalContext.current
     val wifiManager = remember {
         context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
@@ -384,7 +367,7 @@ fun IosInternetTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifier
         modifier = modifier,
         onClick  = {
             val newState = !wifiEnabled
-            wifiEnabled = newState          // optimistic
+            wifiEnabled = newState
             try {
                 @Suppress("DEPRECATION")
                 wifiManager?.setWifiEnabled(newState)
@@ -392,10 +375,6 @@ fun IosInternetTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifier
         },
     )
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Live Bluetooth Toggle Tile
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun IosBluetoothTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifier) {
@@ -410,8 +389,8 @@ fun IosBluetoothTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifie
         val isActive = state.state == Tile.STATE_ACTIVE
         IosConnectivityTile(
             icon = if (isActive) Icons.Filled.Bluetooth else Icons.Filled.BluetoothDisabled,
-            label = state.label?.toString() ?: "Bluetooth",
-            sublabel = state.secondaryLabel?.toString() ?: "",
+            label = "Bluetooth",
+            sublabel = if (isActive) state.secondaryLabel?.toString()?.takeIf { it.isNotBlank() } ?: state.label?.toString() ?: "On" else "Off",
             isActive = isActive,
             modifier = modifier,
             onClick = {
@@ -421,7 +400,6 @@ fun IosBluetoothTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifie
         return
     }
 
-    // Fallback if no VM is provided
     val context  = LocalContext.current
     val btAdapter = remember {
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
@@ -454,7 +432,7 @@ fun IosBluetoothTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifie
         modifier = modifier,
         onClick  = {
             val newState = !btEnabled
-            btEnabled = newState          // optimistic
+            btEnabled = newState
             try {
                 @Suppress("DEPRECATION")
                 if (newState) btAdapter?.enable() else btAdapter?.disable()
@@ -462,10 +440,6 @@ fun IosBluetoothTile(tileVM: TileViewModel? = null, modifier: Modifier = Modifie
         },
     )
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Generic iOS-style tile (icon + label + sublabel, frosted-glass aesthetic)
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun IosConnectivityTile(
@@ -515,7 +489,6 @@ private fun IosConnectivityTile(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start
         ) {
-            // Icon pill
             Box(
                 modifier = Modifier
                     .size(42.dp)
@@ -539,7 +512,6 @@ private fun IosConnectivityTile(
 
             Spacer(Modifier.width(16.dp))
 
-            // Label + sublabel
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.Center
