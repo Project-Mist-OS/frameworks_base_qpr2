@@ -18,15 +18,9 @@
     <!-- Whitelist of package names to bypass alarm manager validation -->
     <java-symbol type="array" name="config_alarmManagerValidationBypassPackages"/>
 
-<<<<<<< HEAD:core/res/res/values/mist_symbols.xml
-    <!-- Whitelist of package names to bypass broadcast reciever validation -->
-    <java-symbol type="array" name="config_broadcaseReceiverValidationBypassPackages"/>
-    
-=======
     <!-- Whitelist of package names to bypass broadcast receiver validation -->
     <java-symbol type="array" name="config_broadcastReceiverValidationBypassPackages"/>
 
->>>>>>> 4da89d128054 (PixelPropsUtils: Refactor spoofing flow, unify logic, and add per-app overrides):core/res/res/values/lunaris_symbols.xml
     <!-- App error dialog -->
     <java-symbol type="id" name="aerr_copy" />
     <java-symbol type="string" name="url_copy_success" />
