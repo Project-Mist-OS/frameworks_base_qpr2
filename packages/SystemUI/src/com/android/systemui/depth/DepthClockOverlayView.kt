@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.android.systemui.depth
 
 import android.app.WallpaperManager
@@ -219,11 +218,47 @@ class DepthClockOverlayView @JvmOverloads constructor(
         return if (path.isEmpty) null else path
     }
 
+    private fun centerCropBitmap(src: Bitmap, dstW: Int, dstH: Int): Bitmap {
+        val srcW = src.width
+        val srcH = src.height
+        val srcAR = srcW.toFloat() / srcH
+        val dstAR = dstW.toFloat() / dstH
+
+        val cropW: Int
+        val cropH: Int
+        val left: Int
+        val top: Int
+
+        if (srcAR > dstAR) {
+            cropH = srcH
+            cropW = (srcH * dstAR).toInt().coerceAtMost(srcW)
+            left = (srcW - cropW) / 2
+            top  = 0
+        } else {
+            cropW = srcW
+            cropH = (srcW / dstAR).toInt().coerceAtMost(srcH)
+            left  = 0
+            top   = (srcH - cropH) / 2
+        }
+
+        if (cropW >= srcW - 2 && cropH >= srcH - 2) return src
+
+        return try {
+            Bitmap.createBitmap(src, left, top, cropW, cropH)
+        } catch (e: Exception) {
+            Log.w(TAG, "centerCropBitmap failed, using original", e)
+            src
+        }
+    }
+
     private fun buildMaskedBitmap(wallpaper: Bitmap, path: Path): Bitmap? {
         val dstW = if (width  > 0) width  else resources.displayMetrics.widthPixels
         val dstH = if (height > 0) height else resources.displayMetrics.heightPixels
 
-        val scaledWall = Bitmap.createScaledBitmap(wallpaper, dstW, dstH, true)
+        val croppedWall = centerCropBitmap(wallpaper, dstW, dstH)
+
+        val scaledWall = Bitmap.createScaledBitmap(croppedWall, dstW, dstH, true)
+        if (croppedWall !== wallpaper && !croppedWall.isRecycled) croppedWall.recycle()
 
         val result = Bitmap.createBitmap(dstW, dstH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(result)
