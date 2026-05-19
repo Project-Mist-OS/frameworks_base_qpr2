@@ -331,5 +331,7 @@ public class SecureSettings {
         Settings.Secure.DOZE_DOUBLE_TAP_GESTURE_VIBRATE,
         Settings.Secure.DOZE_TAP_GESTURE_VIBRATE,
         Settings.Secure.DOZE_PICK_UP_GESTURE_VIBRATE,
+        Settings.Secure.HIGH_TOUCH_RATE_ENABLED,
+        Settings.Secure.HAPTIC_EFFECTS_PROFILE,
     };
 }

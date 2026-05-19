@@ -15371,6 +15371,18 @@ public final class Settings {
         public static final String DOZE_DOUBLE_TAP_GESTURE_VIBRATE = "doze_double_tap_gesture_vibrate";
 
         /**
+         * Haptic effects profile to be used
+         * @hide
+         */
+        public static final String HAPTIC_EFFECTS_PROFILE = "haptic_effects_profile";
+
+        /**
+         * Whether to increase touch polling rate
+         * @hide
+         */
+        public static final String HIGH_TOUCH_RATE_ENABLED = "high_touch_rate_enabled";
+
+        /**
          * Whether to vibrate for the tap gesture
          * @hide
          */
