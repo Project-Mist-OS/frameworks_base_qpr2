@@ -300,7 +300,7 @@ public abstract class LogoImage extends ImageView implements DarkReceiver {
                 drawable = mContext.getResources().getDrawable(R.drawable.ic_ghost);
                 break;
             case 25:
-                draable = mContext.getResources().getDrawable(R.drawable.ic_ninja);
+                drawable = mContext.getResources().getDrawable(R.drawable.ic_ninja);
                 break;
             case 26:
                 drawable = mContext.getResources().getDrawable(R.drawable.ic_robot);
@@ -323,7 +323,7 @@ public abstract class LogoImage extends ImageView implements DarkReceiver {
             case 32:
                 drawable = mContext.getResources().getDrawable(R.drawable.ic_mint_logo);
                 break;
-            case 32:
+            case 33:
                 drawable = mContext.getResources().getDrawable(R.drawable.ic_amogus);
                 break;
         }
