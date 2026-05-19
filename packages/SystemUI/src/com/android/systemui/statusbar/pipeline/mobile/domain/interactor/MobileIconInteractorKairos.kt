@@ -388,14 +388,6 @@ class MobileIconInteractorKairosImpl(
                 }
             }
 
-    override val isMobileHd: State<Boolean> =
-        connectionRepository.imsState
-            .map { it.isHdVoiceCapable() }
-
-    override val isVoWifi: State<Boolean> =
-        connectionRepository.imsState
-            .map { it.isVoWifiAvailable() }
-
     private val SHOW_FOURG_ICON: String =
             "system:" + Settings.System.SHOW_FOURG_ICON
 

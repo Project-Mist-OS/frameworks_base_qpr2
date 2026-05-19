@@ -141,18 +141,6 @@ interface MobileIconInteractor {
     /** True when in carrier network change mode */
     val carrierNetworkChangeActive: Flow<Boolean>
 
-    /** True when VoLTE/VONR available */
-    val isMobileHd: Flow<Boolean>
-
-    /** See [MobileIconsInteractor.isMobileHdForceHidden]. */
-    val isMobileHdForceHidden: Flow<Boolean>
-
-    /** True when VoWifi available */
-    val isVoWifi: Flow<Boolean>
-
-    /** See [MobileIconsInteractor.isVoWifiForceHidden]. */
-    val isVoWifiForceHidden: Flow<Boolean>
-
     val shouldShowFourgIcon: StateFlow<Boolean>
 
     val disableStackedMobileIcons: Flow<Boolean>

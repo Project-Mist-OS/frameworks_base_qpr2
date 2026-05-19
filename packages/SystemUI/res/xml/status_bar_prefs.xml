@@ -18,22 +18,10 @@
     android:key="status_bar"
     android:title="@string/status_bar">
 
-    <com.android.systemui.tuner.RestartingTunerSwitch
-        android:key="status_bar_classic_icons"
-        android:summary="@string/status_bar_classic_icons_summary"
-        android:title="@string/status_bar_classic_icons_title"
-        sysui:defValue="false" />
-
     <com.android.systemui.tuner.StatusBarSwitch
         android:icon="@drawable/ic_statusbar_auto_rotate"
         android:key="rotate"
         android:title="@string/status_bar_settings_auto_rotation" />
-
-    <com.android.systemui.tuner.TunerSwitch
-        android:icon="@drawable/ic_wifi_standard_4"
-        android:key="wifi_standard_icon"
-        android:title="@string/status_bar_wifi_standard"
-        sysui:defValue="false" />
 
     <com.android.systemui.tuner.StatusBarSwitch
         android:icon="@drawable/nt_statusbar_icon_internet_speed"
@@ -44,21 +32,6 @@
         android:icon="@drawable/ic_statusbar_headset"
         android:key="headset"
         android:title="@string/headset" />
-
-    <com.android.systemui.tuner.StatusBarSwitch
-        android:key="volte"
-        android:title="@string/status_bar_volte_icon_title"
-        android:icon="@drawable/ic_statusbar_volte_tuner" />
-
-    <com.android.systemui.tuner.StatusBarSwitch
-        android:key="vonr"
-        android:title="@string/status_bar_vonr_icon_title"
-        android:icon="@drawable/ic_statusbar_vonr_tuner" />
-
-    <com.android.systemui.tuner.StatusBarSwitch
-        android:key="vowifi"
-        android:title="@string/status_bar_vowifi_icon_title"
-        android:icon="@drawable/ic_statusbar_vowifi_tuner" />
 
     <com.android.systemui.tuner.StatusBarSwitch
         android:icon="@drawable/ic_statusbar_firewall"
