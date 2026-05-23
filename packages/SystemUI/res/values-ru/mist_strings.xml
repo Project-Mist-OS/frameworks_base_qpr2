@@ -72,7 +72,7 @@
 
     <!-- On The Go -->
     <string name="onthego_notif_ticker">On-The-Go активирован</string>
-    <string name="onthego_notif_title">On-The-Go активен/string>
+    <string name="onthego_notif_title">On-The-Go активен</string>
     <string name="onthego_notif_stop">Стоп</string>
     <string name="onthego_notif_options">Oпции</string>
     <string name="onthego_notif_error">Не удается запустить On-The-Go</string>
