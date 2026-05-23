@@ -18,6 +18,7 @@ package com.android.systemui.qs.panels.ui.compose
 
 import android.content.ContentResolver
 import android.content.Context
+import com.android.settingslib.display.BrightnessUtils
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
@@ -63,18 +64,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.pow
-
-private const val GAMMA = 2.2f
 
 private fun brightnessToFraction(brightness: Float, min: Float = 1f, max: Float = 255f): Float {
-    val normalized = ((brightness - min) / (max - min)).coerceIn(0f, 1f)
-    return normalized.pow(1f / GAMMA)
+    val gamma = BrightnessUtils.convertLinearToGammaFloat(brightness, min, max)
+    return (gamma.toFloat() / BrightnessUtils.GAMMA_SPACE_MAX).coerceIn(0f, 1f)
 }
 
 private fun fractionToBrightness(fraction: Float, min: Float = 1f, max: Float = 255f): Float {
-    val normalized = fraction.coerceIn(0f, 1f).pow(GAMMA)
-    return (min + normalized * (max - min)).coerceIn(min, max)
+    val gamma = (fraction.coerceIn(0f, 1f) * BrightnessUtils.GAMMA_SPACE_MAX).toInt()
+    return BrightnessUtils.convertGammaToLinearFloat(gamma, min, max)
 }
 
 @Composable
@@ -177,19 +175,17 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     view.parent?.requestDisallowInterceptTouchEvent(true)
 
-                    val downBrightness = yToBrightness(down.position.y, size.height)
-                    brightness = downBrightness
-                    writeBrightness(downBrightness)
+                    var dragging = false
+                    var longPressed = false
 
                     longPressJob = scope.launch {
                         delay(400)
-                        if (!isDragging) {
+                        if (!dragging) {
+                            longPressed = true
                             showExpandedPopup = true
                             view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
                     }
-
-                    var dragging = false
 
                     try {
                         while (true) {
@@ -199,12 +195,17 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
 
                             if (!currentPointer.pressed) {
                                 longPressJob?.cancel()
+                                if (!dragging && !longPressed) {
+                                    val tapBrightness = yToBrightness(currentPointer.position.y, size.height)
+                                    brightness = tapBrightness
+                                    writeBrightness(tapBrightness)
+                                }
                                 break
                             }
 
                             val dragAmount = currentPointer.position.y - down.position.y
 
-                            if (!dragging && abs(dragAmount) > viewConfiguration.touchSlop) {
+                            if (!dragging && !longPressed && abs(dragAmount) > viewConfiguration.touchSlop) {
                                 dragging = true
                                 isDragging = true
                                 longPressJob?.cancel()

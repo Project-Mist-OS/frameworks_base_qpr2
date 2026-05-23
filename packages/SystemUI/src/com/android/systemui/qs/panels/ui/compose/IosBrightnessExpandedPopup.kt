@@ -18,6 +18,7 @@ package com.android.systemui.qs.panels.ui.compose
 
 import android.app.UiModeManager
 import android.content.Context
+import com.android.settingslib.display.BrightnessUtils
 import android.hardware.display.ColorDisplayManager
 import android.os.UserHandle
 import android.provider.Settings
@@ -74,7 +75,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import com.android.compose.ui.graphics.painter.rememberDrawablePainter
 import com.android.systemui.res.R
-import kotlin.math.pow
 
 @Composable
 fun IosBrightnessExpandedPopup(
@@ -256,13 +256,13 @@ private fun IosPopupToggle(
 }
 
 private fun brightnessToFraction(brightness: Float, min: Float = 1f, max: Float = 255f): Float {
-    val normalized = ((brightness - min) / (max - min)).coerceIn(0f, 1f)
-    return normalized.pow(1f / 2.2f)
+    val gamma = BrightnessUtils.convertLinearToGammaFloat(brightness, min, max)
+    return (gamma.toFloat() / BrightnessUtils.GAMMA_SPACE_MAX).coerceIn(0f, 1f)
 }
 
 private fun fractionToBrightness(fraction: Float, min: Float = 1f, max: Float = 255f): Float {
-    val normalized = fraction.coerceIn(0f, 1f).pow(2.2f)
-    return (min + normalized * (max - min)).coerceIn(min, max)
+    val gamma = (fraction.coerceIn(0f, 1f) * BrightnessUtils.GAMMA_SPACE_MAX).toInt()
+    return BrightnessUtils.convertGammaToLinearFloat(gamma, min, max)
 }
 
 @Composable
@@ -333,3 +333,4 @@ private fun IosLargeVerticalBrightnessSlider(
         )
     }
 }
+
