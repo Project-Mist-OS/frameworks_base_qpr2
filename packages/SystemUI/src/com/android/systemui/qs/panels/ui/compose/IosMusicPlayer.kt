@@ -18,6 +18,8 @@ package com.android.systemui.qs.panels.ui.compose
 
 import android.content.Context
 import android.content.Intent
+import com.android.systemui.Dependency
+import com.android.systemui.plugins.ActivityStarter
 import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.session.MediaController
@@ -86,7 +88,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 
-/** Data holder for the current media playback state. */
 private data class MediaState(
     val title: String? = null,
     val artist: String? = null,
@@ -192,8 +193,16 @@ private fun launchMusicApp(context: Context, packageName: String?) {
         val intent = context.packageManager
             .getLaunchIntentForPackage(packageName) ?: return
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-        context.startActivity(intent)
-    } catch (_: Exception) {}
+        val activityStarter = Dependency.get(ActivityStarter::class.java)
+        activityStarter.postStartActivityDismissingKeyguard(intent, 0)
+    } catch (_: Exception) {
+        try {
+            val intent = context.packageManager
+                .getLaunchIntentForPackage(packageName) ?: return
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            context.startActivity(intent)
+        } catch (_: Exception) {}
+    }
 }
 
 @Composable
