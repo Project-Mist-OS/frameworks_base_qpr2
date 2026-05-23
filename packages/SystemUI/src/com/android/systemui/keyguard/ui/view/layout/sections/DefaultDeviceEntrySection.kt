@@ -131,7 +131,7 @@ constructor(
         val defaultDensity =
             DisplayMetrics.DENSITY_DEVICE_STABLE.toFloat() /
                 DisplayMetrics.DENSITY_DEFAULT.toFloat()
-        val iconRadiusPx = (defaultDensity * 36).toInt()
+        val iconRadiusPx = (defaultDensity * 24).toInt()
 
         if (isUdfpsSupported) {
             deviceEntryIconViewModel.get().udfpsLocation.value?.let { udfpsLocation ->
