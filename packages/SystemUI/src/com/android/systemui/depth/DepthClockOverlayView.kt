@@ -25,6 +25,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Handler
@@ -40,6 +41,7 @@ import java.nio.ByteOrder
 
 private const val TAG = "DepthClockOverlayView"
 private const val SETTING_DEPTH_MASK    = "ax_depth_subject_mask"
+private const val SETTING_DEPTH_BOUNDS  = "ax_depth_subject_bounds"
 private const val SETTING_DEPTH_ENABLED = "ax_depth_clock_enabled"
 private const val SETTING_DEPTH_OPACITY  = "lock_screen_depth_wallpaper_opacity"
 private const val SETTING_DEPTH_OFFSET_X = "lock_screen_depth_wallpaper_offset_x"
@@ -91,6 +93,7 @@ class DepthClockOverlayView @JvmOverloads constructor(
         listOf(
             Settings.Secure.getUriFor(SETTING_DEPTH_ENABLED),
             Settings.Secure.getUriFor(SETTING_DEPTH_MASK),
+            Settings.Secure.getUriFor(SETTING_DEPTH_BOUNDS),
             Settings.System.getUriFor(SETTING_DEPTH_OPACITY),
             Settings.System.getUriFor(SETTING_DEPTH_OFFSET_X),
             Settings.System.getUriFor(SETTING_DEPTH_OFFSET_Y),
@@ -149,6 +152,40 @@ class DepthClockOverlayView @JvmOverloads constructor(
         }.start()
     }
 
+    private fun parseCropBoundsFromSettings(cr: android.content.ContentResolver, actualW: Int, actualH: Int): Rect? {
+        val boundsStr = Settings.Secure.getString(cr, SETTING_DEPTH_BOUNDS)
+        if (boundsStr.isNullOrBlank()) return null
+
+        return try {
+            val parts = boundsStr.split(",")
+            if (parts.size == 6) {
+                val srcW = parts[0].toInt()
+                val srcH = parts[1].toInt()
+                val left = parts[2].toInt()
+                val top = parts[3].toInt()
+                val right = parts[4].toInt()
+                val bottom = parts[5].toInt()
+
+                if (srcW <= 0 || srcH <= 0) return null
+
+                val scaleX = actualW.toFloat() / srcW
+                val scaleY = actualH.toFloat() / srcH
+
+                val l = (left * scaleX).toInt().coerceIn(0, actualW)
+                val t = (top * scaleY).toInt().coerceIn(0, actualH)
+                val r = (right * scaleX).toInt().coerceIn(l, actualW)
+                val b = (bottom * scaleY).toInt().coerceIn(t, actualH)
+
+                Rect(l, t, r, b)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse crop bounds: $boundsStr", e)
+            null
+        }
+    }
+
     private fun buildSubjectBitmap(): Bitmap? {
         val cr = context.contentResolver
 
@@ -170,8 +207,10 @@ class DepthClockOverlayView @JvmOverloads constructor(
             return null
         }
 
+        val cropHint = parseCropBoundsFromSettings(cr, wallpaper.width, wallpaper.height)
+
         return try {
-            buildMaskedBitmap(wallpaper, path)
+            buildMaskedBitmap(wallpaper, path, cropHint)
         } finally {
             if (!wallpaper.isRecycled) wallpaper.recycle()
         }
@@ -251,11 +290,20 @@ class DepthClockOverlayView @JvmOverloads constructor(
         }
     }
 
-    private fun buildMaskedBitmap(wallpaper: Bitmap, path: Path): Bitmap? {
+    private fun buildMaskedBitmap(wallpaper: Bitmap, path: Path, cropHint: Rect?): Bitmap? {
         val dstW = if (width  > 0) width  else resources.displayMetrics.widthPixels
         val dstH = if (height > 0) height else resources.displayMetrics.heightPixels
 
-        val croppedWall = centerCropBitmap(wallpaper, dstW, dstH)
+        val croppedWall = if (cropHint != null && cropHint.width() > 0 && cropHint.height() > 0) {
+            try {
+                Bitmap.createBitmap(wallpaper, cropHint.left, cropHint.top, cropHint.width(), cropHint.height())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to crop using cropHint: $cropHint", e)
+                centerCropBitmap(wallpaper, dstW, dstH)
+            }
+        } else {
+            centerCropBitmap(wallpaper, dstW, dstH)
+        }
 
         val scaledWall = Bitmap.createScaledBitmap(croppedWall, dstW, dstH, true)
         if (croppedWall !== wallpaper && !croppedWall.isRecycled) croppedWall.recycle()
