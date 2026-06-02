@@ -48,6 +48,9 @@ private const val SETTING_DEPTH_OFFSET_X = "lock_screen_depth_wallpaper_offset_x
 private const val SETTING_DEPTH_OFFSET_Y = "lock_screen_depth_wallpaper_offset_y"
 private const val NORMALIZE_RANGE = 10000f
 
+private const val LAUNCHER_NEXUS_PIXEL = "com.google.android.apps.nexuslauncher"
+private const val WALLPAPER_SCALE_PIXEL = 1.10f
+
 class DepthClockOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -57,15 +60,12 @@ class DepthClockOverlayView @JvmOverloads constructor(
     @Volatile private var cachedOpacityAlpha: Int = 255
     @Volatile private var cachedOffsetXPx: Float  = 0f
     @Volatile private var cachedOffsetYPx: Float  = 0f
+    @Volatile private var cachedLauncherScale: Float = 1.0f
 
     private val handler = Handler(Looper.getMainLooper())
-
     private var subjectBitmap: Bitmap? = null
-
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-
     private var isRegistered = false
-
     private val settingsObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean, uri: Uri?) {
             refreshCachedSettings()
@@ -120,6 +120,7 @@ class DepthClockOverlayView @JvmOverloads constructor(
             UserHandle.USER_CURRENT) * density
         cachedOffsetYPx = Settings.System.getIntForUser(cr, SETTING_DEPTH_OFFSET_Y, 0,
             UserHandle.USER_CURRENT) * density
+        cachedLauncherScale = resolveLauncherWallpaperScale()
     }
 
     private fun refreshSubjectAsync() {
@@ -341,9 +342,37 @@ class DepthClockOverlayView @JvmOverloads constructor(
         }
     }
 
+    private fun resolveLauncherWallpaperScale(): Float {
+        return try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                addCategory(android.content.Intent.CATEGORY_HOME)
+            }
+            val info = context.packageManager.resolveActivity(
+                intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+            )
+            val pkg = info?.activityInfo?.packageName
+            Log.d(TAG, "Default launcher: $pkg")
+            if (pkg == LAUNCHER_NEXUS_PIXEL) WALLPAPER_SCALE_PIXEL else 1.0f
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not resolve default launcher, defaulting scale to 1.0", e)
+            1.0f
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         val bmp = subjectBitmap ?: return
         bitmapPaint.alpha = cachedOpacityAlpha
-        canvas.drawBitmap(bmp, cachedOffsetXPx, cachedOffsetYPx, bitmapPaint)
+
+        val scale = cachedLauncherScale
+        if (scale != 1.0f) {
+            val cx = width / 2f
+            val cy = height / 2f
+            canvas.save()
+            canvas.scale(scale, scale, cx, cy)
+            canvas.drawBitmap(bmp, cachedOffsetXPx, cachedOffsetYPx, bitmapPaint)
+            canvas.restore()
+        } else {
+            canvas.drawBitmap(bmp, cachedOffsetXPx, cachedOffsetYPx, bitmapPaint)
+        }
     }
 }
