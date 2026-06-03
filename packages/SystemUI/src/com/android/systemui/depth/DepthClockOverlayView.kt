@@ -123,13 +123,24 @@ class DepthClockOverlayView @JvmOverloads constructor(
         cachedLauncherScale = resolveLauncherWallpaperScale()
     }
 
+    private var hideOnAod = false
+    fun setHideOnAod(hide: Boolean) {
+        if (hideOnAod != hide) {
+            hideOnAod = hide
+            handler.post { updateVisibility() }
+        }
+    }
+    private fun updateVisibility() {
+        visibility = if (hideOnAod) INVISIBLE else (if (subjectBitmap != null) VISIBLE else INVISIBLE)
+    }
+
     private fun refreshSubjectAsync() {
         Thread {
             val bitmap = buildSubjectBitmap()
             handler.post {
                 subjectBitmap?.recycle()
                 subjectBitmap = bitmap
-                visibility = if (bitmap != null) VISIBLE else INVISIBLE
+                updateVisibility()
 
                 if (bitmap != null) {
                     this@DepthClockOverlayView.z = 2f

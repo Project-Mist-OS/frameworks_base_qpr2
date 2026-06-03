@@ -13,9 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.systemui.keyguard.ui.view.layout.sections
 
 import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -23,6 +29,7 @@ import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.constraintlayout.widget.ConstraintSet
 import com.android.systemui.depth.DepthClockOverlayView
 import com.android.systemui.keyguard.shared.model.KeyguardSection
+import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.res.R
 import javax.inject.Inject
 
@@ -30,10 +37,37 @@ class KeyguardDepthSection
 @Inject
 constructor(
     private val context: Context,
+    private val statusBarStateController: StatusBarStateController,
 ) : KeyguardSection() {
 
     private val TAG = "KeyguardDepthSection"
     private var depthView: DepthClockOverlayView? = null
+    private var isCanvasAodEnabled = false
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val enabledObserver = object : ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+            updateCanvasEnabled()
+            updateVisibility()
+        }
+    }
+
+    private val statusBarListener = object : StatusBarStateController.StateListener {
+        override fun onDozingChanged(dozing: Boolean) {
+            updateVisibility()
+        }
+    }
+
+    private fun updateCanvasEnabled() {
+        isCanvasAodEnabled = Settings.Secure.getIntForUser(
+            context.contentResolver, "canvas_aod_enabled", 0, UserHandle.USER_CURRENT
+        ) == 1
+    }
+
+    private fun updateVisibility() {
+        val dozing = statusBarStateController.isDozing
+        depthView?.setHideOnAod(dozing && isCanvasAodEnabled)
+    }
 
     companion object {
         val VIEW_ID: Int
@@ -57,6 +91,17 @@ constructor(
 
         depthView?.let { constraintLayout.addView(it) }
         Log.d(TAG, "DepthClockOverlayView added to keyguard layout")
+
+        statusBarStateController.addCallback(statusBarListener)
+        context.contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor("canvas_aod_enabled"),
+            false,
+            enabledObserver,
+            UserHandle.USER_ALL,
+        )
+
+        updateCanvasEnabled()
+        updateVisibility()
     }
 
     override fun bindData(constraintLayout: ConstraintLayout) {
@@ -76,6 +121,8 @@ constructor(
     }
 
     override fun removeViews(constraintLayout: ConstraintLayout) {
+        statusBarStateController.removeCallback(statusBarListener)
+        context.contentResolver.unregisterContentObserver(enabledObserver)
         depthView?.let { (it.parent as? ViewGroup)?.removeView(it) }
         depthView = null
     }
