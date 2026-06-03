@@ -223,7 +223,7 @@ class WeatherParticleOverlay(
             WeatherEffect.RAIN -> {
                 for (drop in rainDrops) {
                     drop.y += drop.speed
-                    drop.x += drop.speed * 0.35f 
+                    drop.x += drop.speed * 0.35f
                     if (drop.y - drop.length > h || drop.x > w) {
                         drop.x = Random.nextFloat() * w
                         drop.y = -drop.length

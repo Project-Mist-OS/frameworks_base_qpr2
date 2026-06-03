@@ -47,6 +47,7 @@ private const val SETTING_ANIMATION_SPEED   = "canvas_aod_animation_speed"
 private const val SETTING_WEATHER_EFFECTS   = "canvas_aod_weather_effects"
 private const val SETTING_CHARGING_ANIM     = "canvas_aod_charging_animation"
 private const val SETTING_NOTIF_PULSE       = "canvas_aod_notification_pulse"
+
 private const val BURN_IN_MAX_PX      = 4
 private const val BURN_IN_INTERVAL_MS = 60_000L
 
@@ -68,15 +69,11 @@ class CanvasAodView @JvmOverloads constructor(
     private var chargingAnim = true
     private var notifPulse   = true
     private var weatherEnabled = false
-
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val handler = Handler(Looper.getMainLooper())
-
     private var animator: CanvasPathRevealAnimator? = null
     private var weatherOverlay: WeatherParticleOverlay? = null
-
     private var isRegistered = false
-
     private val settingsObserver = object : ContentObserver(handler) {
         override fun onChange(selfChange: Boolean, uri: Uri?) {
             refreshSettings()
@@ -194,20 +191,31 @@ class CanvasAodView @JvmOverloads constructor(
         }
     }
 
-
-
-    fun onDozingChanged(dozing: Boolean) {
+    fun onDozingChanged(dozing: Boolean, isCanvasEnabled: Boolean) {
         isDozing = dozing
         weatherOverlay?.active = dozing
 
         if (dozing) {
-            val bmp = canvasBitmap
-            if (bmp != null) startRevealAnimation(bmp)
-            handler.postDelayed(burnInRunnable, BURN_IN_INTERVAL_MS)
+            if (isCanvasEnabled) {
+                visibility = View.VISIBLE
+                val bmp = canvasBitmap
+                if (bmp != null) startRevealAnimation(bmp)
+                handler.postDelayed(burnInRunnable, BURN_IN_INTERVAL_MS)
+            } else {
+                visibility = View.INVISIBLE
+            }
         } else {
-            animator?.stop()
             handler.removeCallbacks(burnInRunnable)
             burnInOffsetX = 0f; burnInOffsetY = 0f
+            if (visibility == View.VISIBLE && isCanvasEnabled) {
+                animator?.fadeOut {
+                    visibility = View.INVISIBLE
+                    animator?.stop()
+                }
+            } else {
+                animator?.stop()
+                visibility = View.INVISIBLE
+            }
         }
         invalidate()
     }
@@ -264,3 +272,4 @@ class CanvasAodView @JvmOverloads constructor(
         canvas.restore()
     }
 }
+

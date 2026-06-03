@@ -24,6 +24,7 @@ import android.view.animation.LinearInterpolator
 import android.util.Log
 
 private const val TAG = "CanvasPathRevealAnimator"
+
 private const val SPEED_SLOW   = 4000L
 private const val SPEED_NORMAL = 2500L
 private const val SPEED_FAST   = 1200L
@@ -45,8 +46,10 @@ class CanvasPathRevealAnimator(
     @Volatile var isChargingPulse: Boolean = false
     private var pulseAnimator: ValueAnimator? = null
     @Volatile var pulseAlpha: Int = 255
+
     @Volatile var notifFlashAlpha: Int = 0
     private var notifAnimator: ValueAnimator? = null
+
     private val duration: Long = when (speedMode) {
         0    -> SPEED_SLOW
         2    -> SPEED_FAST
@@ -85,6 +88,29 @@ class CanvasPathRevealAnimator(
         progress  = 1f
         fadeAlpha = 255
         onInvalidate()
+    }
+
+    fun fadeOut(onEnd: () -> Unit) {
+        stop()
+        val startAlpha = fadeAlpha
+        if (startAlpha <= 0) {
+            onEnd()
+            return
+        }
+        animator = ValueAnimator.ofInt(startAlpha, 0).apply {
+            duration = 400L
+            interpolator = android.view.animation.AccelerateInterpolator()
+            addUpdateListener { anim ->
+                fadeAlpha = anim.animatedValue as Int
+                onInvalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    onEnd()
+                }
+            })
+            start()
+        }
     }
 
     fun startChargingPulse() {
