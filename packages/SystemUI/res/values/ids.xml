@@ -245,6 +245,7 @@
 
     <!-- Depth wallpaper subject overlay (DepthClockOverlayView) -->
     <item type="id" name="depth_wallpaper_subject" />
+    <item type="id" name="canvas_aod_view" />
 
     <!-- Custom clock style view (ClockStyle) -->
     <item type="id" name="clock_ls" />
