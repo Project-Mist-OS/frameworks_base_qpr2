@@ -60,8 +60,7 @@ constructor(
 
     private val statusBarListener = object : StatusBarStateController.StateListener {
         override fun onDozingChanged(dozing: Boolean) {
-            canvasAodView?.onDozingChanged(dozing)
-            updateVisibility()
+            canvasAodView?.onDozingChanged(dozing, isCanvasEnabled)
         }
     }
 
@@ -101,8 +100,7 @@ constructor(
         ) == 1
 
         val dozing = statusBarStateController.isDozing
-        canvasAodView?.onDozingChanged(dozing)
-        updateVisibility()
+        canvasAodView?.onDozingChanged(dozing, isCanvasEnabled)
     }
 
     override fun bindData(constraintLayout: ConstraintLayout) {
@@ -130,7 +128,7 @@ constructor(
 
     private fun updateVisibility() {
         val dozing = statusBarStateController.isDozing
-        canvasAodView?.visibility = if (isCanvasEnabled && dozing) View.VISIBLE else View.INVISIBLE
-        Log.d(TAG_LOCAL, "updateVisibility: enabled=$isCanvasEnabled dozing=$dozing")
+        canvasAodView?.onDozingChanged(dozing, isCanvasEnabled)
     }
 }
+
