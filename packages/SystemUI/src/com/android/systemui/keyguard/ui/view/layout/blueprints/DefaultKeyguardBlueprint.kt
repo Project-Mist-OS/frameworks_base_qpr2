@@ -42,6 +42,7 @@ import com.android.systemui.keyguard.ui.view.layout.sections.InfoWidgetsSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardClockStyleSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AODStyleSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardDepthSection
+import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardCanvasAodSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardWeatherViewSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SmartspaceSection
 import java.util.Optional
@@ -81,6 +82,7 @@ constructor(
     keyguardClockStyleSection: KeyguardClockStyleSection,
     aodStyleSection: AODStyleSection,
     keyguardDepthSection: KeyguardDepthSection,
+    keyguardCanvasAodSection: KeyguardCanvasAodSection,
     axDynamicBarKeyguardChipSection: AxDynamicBarKeyguardChipSection,
     mistHubSection: MistHubSection,
     udfpsAccessibilityOverlaySection: DefaultUdfpsAccessibilityOverlaySection,
@@ -109,10 +111,10 @@ constructor(
             keyguardWidgetViewSection,
             infoWidgetsSection,
             keyguardClockStyleSection,
-	        aodStyleSection,
-            keyguardWeatherViewSection,
+            aodStyleSection,
             defaultDeviceEntrySection,
-            keyguardDepthSection, 
+            keyguardDepthSection,
+            keyguardCanvasAodSection,
             udfpsAccessibilityOverlaySection, // Add LAST: Intentionally has z-order above others
         )
 
