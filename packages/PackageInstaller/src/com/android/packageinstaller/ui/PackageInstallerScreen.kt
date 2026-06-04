@@ -91,13 +91,18 @@ data class HyperThemeContext(
 )
 
 @Composable
-fun currentHyperTheme(): HyperThemeContext {
+fun currentHyperTheme(blurEnabled: Boolean = true): HyperThemeContext {
     val isDark = isSystemInDarkTheme()
     val colorScheme = MaterialTheme.colorScheme
 
     return HyperThemeContext(
-        BgDeep = Color.Transparent,
-        BgCard = if (isDark) colorScheme.surface.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.12f),
+        BgDeep = if (blurEnabled) Color.Transparent
+                 else if (isDark) colorScheme.surface else colorScheme.background,
+        BgCard = if (blurEnabled) {
+            if (isDark) colorScheme.surface.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.12f)
+        } else {
+            if (isDark) colorScheme.surfaceContainerHigh else colorScheme.surfaceContainerLow
+        },
         BgGlass = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.04f),
         BgGlassBorder = if (isDark) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.45f),
         TextPrimary = colorScheme.onSurface,
@@ -113,19 +118,22 @@ fun currentHyperTheme(): HyperThemeContext {
 fun PackageInstallerScreen(
     appInfo: AppInfoData,
     initialPhase: InstallerPhase = InstallerPhase.CONFIRM,
+    blurEnabled: Boolean = true,
     onInstallConfirmed: () -> Unit = {},
     onOpenApp: () -> Unit = {},
     onDismiss: () -> Unit = {},
 ) {
     var phase by remember { mutableStateOf(initialPhase) }
     val progress by remember { mutableFloatStateOf(0f) }
-    val theme = currentHyperTheme()
+    val theme = currentHyperTheme(blurEnabled)
 
     Box(
         modifier = Modifier.fillMaxSize().background(theme.BgDeep),
         contentAlignment = Alignment.BottomCenter
     ) {
-        AnimatedMeshBackground(theme.Accent)
+        if (blurEnabled) {
+            AnimatedMeshBackground(theme.Accent)
+        }
 
         Box(
             modifier = Modifier
