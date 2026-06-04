@@ -18,6 +18,7 @@ package com.android.packageinstaller.ui
 
 import android.app.Activity
 import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -63,6 +64,15 @@ object PackageInstallerComposeBridge {
             isSystemApp = isSystemApp
         )
 
+        val cr = activity.contentResolver
+        val blurDisabled = Settings.Global.getInt(
+            cr, "disable_window_blurs", 0
+        ) != 0
+        val blurEnabled = !blurDisabled
+
+        val systemBlurRadius: Float = Settings.Secure.getFloat(cr, "system_blur_radius", 34f)
+        val scaledBlurRadius = ((systemBlurRadius / 150f) * 130f).toInt().coerceAtLeast(10)
+
         val composeView = ComposeView(activity).apply {
             setContent {
                 val isDark = isSystemInDarkTheme()
@@ -77,6 +87,7 @@ object PackageInstallerComposeBridge {
                     PackageInstallerScreen(
                         appInfo = appInfo,
                         initialPhase = initialPhase,
+                        blurEnabled = blurEnabled,
                         onInstallConfirmed = onInstallConfirmed,
                         onOpenApp = onOpenApp,
                         onDismiss = onCancel
@@ -88,10 +99,13 @@ object PackageInstallerComposeBridge {
         activity.setContentView(composeView)
 
         activity.window.apply {
-            if (Build.VERSION.SDK_INT >= 31 && decorView != null) {
-                setBackgroundBlurRadius(130)
+            if (blurEnabled && Build.VERSION.SDK_INT >= 31 && decorView != null) {
+                setBackgroundBlurRadius(scaledBlurRadius)
+                setDimAmount(0.05f)
+            } else {
+                setBackgroundBlurRadius(0)
+                setDimAmount(0.6f)
             }
-            setDimAmount(0.05f)
             addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
     }
