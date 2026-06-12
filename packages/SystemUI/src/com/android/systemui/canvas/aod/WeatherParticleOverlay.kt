@@ -17,9 +17,11 @@
 package com.android.systemui.canvas.aod
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
@@ -43,11 +45,13 @@ private const val COND_SNOW_MIN         = 600
 private const val COND_SNOW_MAX         = 622
 private const val COND_ATMO_MIN         = 701
 private const val COND_ATMO_MAX         = 741
+private const val COND_CLOUDS_MIN       = 801
+private const val COND_CLOUDS_MAX       = 804
 
 private const val SETTING_WEATHER_EFFECTS    = "canvas_aod_weather_effects"
 private const val SETTING_WEATHER_INTENSITY  = "canvas_aod_weather_intensity"
 
-private enum class WeatherEffect { NONE, RAIN, SNOW, FOG, LIGHTNING }
+private enum class WeatherEffect { NONE, RAIN, SNOW, FOG, LIGHTNING, CLOUDS, SUNNY }
 
 class WeatherParticleOverlay(
     private val context: Context,
@@ -59,12 +63,12 @@ class WeatherParticleOverlay(
 
     private var currentEffect = WeatherEffect.NONE
     private var intensityMultiplier = 1.0f
-
     private val rainPaint  = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
     private val snowPaint  = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fogPaint   = Paint(Paint.ANTI_ALIAS_FLAG)
     private val flashPaint = Paint()
-
+    private val cloudPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sunPaint   = Paint(Paint.ANTI_ALIAS_FLAG)
     private data class RainDrop(
         var x: Float, var y: Float,
         var speed: Float, var length: Float, var alpha: Int,
@@ -75,12 +79,20 @@ class WeatherParticleOverlay(
         var speed: Float, var sway: Float, var swayPhase: Float, var alpha: Int,
     )
 
+    private data class CloudShape(
+        var x: Float, var y: Float, var radius: Float,
+        var speedX: Float, var alpha: Int,
+    )
+
     private var rainDrops  = emptyList<RainDrop>()
     private var snowFlakes = emptyList<SnowFlake>()
+    private var cloudsList = emptyList<CloudShape>()
 
     private var fogOffsetX1 = 0f
     private var fogOffsetX2 = 0f
     private var fogPhase    = 0f
+
+    private var sunPulsePhase = 0f
 
     private var lightningFlashAlpha = 0
     private var lightningCooldown   = 0L
@@ -88,6 +100,8 @@ class WeatherParticleOverlay(
 
     private var viewW = 1f
     private var viewH = 1f
+
+    private var cloudBitmap: Bitmap? = null
 
     private val choreographer = Choreographer.getInstance()
     private val frameCallback = Choreographer.FrameCallback { doFrame() }
@@ -144,14 +158,29 @@ class WeatherParticleOverlay(
             val info = OmniJawsClient.get().weatherInfo
             if (info == null) { currentEffect = WeatherEffect.NONE; return }
             val codeStr = info.conditionCode?.toString() ?: ""
-            val code = try { codeStr.toInt() } catch (e: Exception) { 0 }
+            val code = try { codeStr.toInt() } catch (e: Exception) { -1 }
+            
+            val isThunderstorm = code in COND_THUNDERSTORM_MIN..COND_THUNDERSTORM_MAX || 
+                                 code in listOf(3, 4, 37, 38, 39, 45, 47)
+            val isRain = code in COND_DRIZZLE_MIN..COND_DRIZZLE_MAX || 
+                         code in COND_RAIN_MIN..COND_RAIN_MAX ||
+                         code in listOf(5, 6, 8, 9, 10, 11, 12, 35, 40)
+            val isSnow = code in COND_SNOW_MIN..COND_SNOW_MAX || 
+                         code in listOf(7, 13, 14, 15, 16, 17, 18, 41, 42, 43, 46)
+            val isFog = code in COND_ATMO_MIN..COND_ATMO_MAX || 
+                        code in listOf(19, 20, 21, 22)
+            val isClouds = code in COND_CLOUDS_MIN..COND_CLOUDS_MAX || 
+                           code in listOf(26, 27, 28, 29, 30, 44)
+            val isSunny = code == 800 || code in listOf(31, 32, 33, 34, 36)
+
             currentEffect = when {
-                code in COND_THUNDERSTORM_MIN..COND_THUNDERSTORM_MAX -> WeatherEffect.LIGHTNING
-                code in COND_DRIZZLE_MIN..COND_DRIZZLE_MAX           -> WeatherEffect.RAIN
-                code in COND_RAIN_MIN..COND_RAIN_MAX                  -> WeatherEffect.RAIN
-                code in COND_SNOW_MIN..COND_SNOW_MAX                  -> WeatherEffect.SNOW
-                code in COND_ATMO_MIN..COND_ATMO_MAX                  -> WeatherEffect.FOG
-                else -> WeatherEffect.NONE
+                isThunderstorm -> WeatherEffect.LIGHTNING
+                isRain         -> WeatherEffect.RAIN
+                isSnow         -> WeatherEffect.SNOW
+                isFog          -> WeatherEffect.FOG
+                isClouds       -> WeatherEffect.CLOUDS
+                isSunny        -> WeatherEffect.SUNNY
+                else           -> WeatherEffect.NONE
             }
             Log.d(TAG, "Weather effect: $currentEffect (conditionCode=$code)")
             if (currentEffect != WeatherEffect.NONE && viewW > 1f) {
@@ -194,6 +223,36 @@ class WeatherParticleOverlay(
             }
             WeatherEffect.FOG -> {
                 fogOffsetX1 = 0f; fogOffsetX2 = w * 0.4f; fogPhase = 0f
+            }
+            WeatherEffect.CLOUDS -> {
+                if (cloudBitmap == null) {
+                    try {
+                        val drawable = context.getDrawable(com.android.systemui.res.R.drawable.canvas_aod_cloudy)
+                        if (drawable != null) {
+                            val bitmap = Bitmap.createBitmap(150, 150, Bitmap.Config.ARGB_8888)
+                            val canvas = Canvas(bitmap)
+                            drawable.setBounds(0, 0, canvas.width, canvas.height)
+                            drawable.draw(canvas)
+                            cloudBitmap = bitmap
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to load cloud drawable", e)
+                    }
+                }
+                
+                val count = 3
+                cloudsList = List(count) {
+                    CloudShape(
+                        x = Random.nextFloat() * w,
+                        y = Random.nextFloat() * (h * 0.4f),
+                        radius = w * 0.15f + Random.nextFloat() * (w * 0.1f),
+                        speedX = 0.2f + Random.nextFloat() * 0.5f,
+                        alpha = 15 + Random.nextInt(25)
+                    )
+                }
+            }
+            WeatherEffect.SUNNY -> {
+                sunPulsePhase = 0f
             }
             WeatherEffect.LIGHTNING -> {
                 lightningCooldown   = System.currentTimeMillis() + randomLightningDelay()
@@ -248,6 +307,18 @@ class WeatherParticleOverlay(
                 fogOffsetX1 = sin(fogPhase) * w * 0.08f
                 fogOffsetX2 = cos(fogPhase * 0.7f) * w * 0.06f
             }
+            WeatherEffect.CLOUDS -> {
+                for (c in cloudsList) {
+                    c.x += c.speedX
+                    if (c.x - c.radius > w) {
+                        c.x = -c.radius
+                        c.y = Random.nextFloat() * (h * 0.4f)
+                    }
+                }
+            }
+            WeatherEffect.SUNNY -> {
+                sunPulsePhase += 0.015f
+            }
             WeatherEffect.LIGHTNING -> {
                 if (lightningFlashAlpha > 0) {
                     lightningFlashAlpha = (lightningFlashAlpha - 12).coerceAtLeast(0)
@@ -272,17 +343,19 @@ class WeatherParticleOverlay(
             WeatherEffect.RAIN      -> drawRain(canvas)
             WeatherEffect.SNOW      -> drawSnow(canvas)
             WeatherEffect.FOG       -> drawFog(canvas)
+            WeatherEffect.CLOUDS    -> drawClouds(canvas)
+            WeatherEffect.SUNNY     -> drawSunny(canvas)
             WeatherEffect.LIGHTNING -> drawLightning(canvas)
             else -> {}
         }
 
-        if (rainDrops.isEmpty() && snowFlakes.isEmpty() && currentEffect != WeatherEffect.FOG
-            && currentEffect != WeatherEffect.LIGHTNING && currentEffect != WeatherEffect.NONE) {
+        if (rainDrops.isEmpty() && snowFlakes.isEmpty() && cloudsList.isEmpty() && currentEffect != WeatherEffect.FOG
+            && currentEffect != WeatherEffect.LIGHTNING && currentEffect != WeatherEffect.SUNNY && currentEffect != WeatherEffect.NONE) {
             initParticles(viewW, viewH)
         }
-        if (currentEffect == WeatherEffect.FOG || currentEffect == WeatherEffect.LIGHTNING) {
+        if (currentEffect == WeatherEffect.FOG || currentEffect == WeatherEffect.LIGHTNING || currentEffect == WeatherEffect.SUNNY) {
             if (fogOffsetX1 == 0f && fogOffsetX2 == 0f && fogPhase == 0f
-                && lightningCooldown == 0L) {
+                && lightningCooldown == 0L && sunPulsePhase == 0f) {
                 initParticles(viewW, viewH)
             }
         }
@@ -329,6 +402,39 @@ class WeatherParticleOverlay(
             android.graphics.Shader.TileMode.CLAMP,
         )
         canvas.drawRect(0f, 0f, w, h, fogPaint)
+    }
+
+    private val cloudRect = RectF()
+
+    private fun drawClouds(canvas: Canvas) {
+        val bitmap = cloudBitmap
+        if (bitmap == null) return
+        
+        for (c in cloudsList) {
+            cloudPaint.color = Color.WHITE
+            cloudPaint.alpha = (c.alpha * intensityMultiplier).toInt().coerceIn(0, 100)
+            
+            val w = c.radius * 2.5f
+            val h = c.radius * 2.5f
+            cloudRect.set(c.x - w / 2f, c.y - h / 2f, c.x + w / 2f, c.y + h / 2f)
+            
+            canvas.drawBitmap(bitmap, null, cloudRect, cloudPaint)
+        }
+    }
+
+    private fun drawSunny(canvas: Canvas) {
+        val w = viewW; val h = viewH
+        val baseAlpha = (30 * intensityMultiplier).toInt().coerceIn(10, 60)
+        val pulse = (sin(sunPulsePhase) * 10f).toInt()
+        
+        sunPaint.shader = android.graphics.RadialGradient(
+            w * 0.8f, h * 0.15f,
+            w * 0.5f,
+            intArrayOf(Color.argb(baseAlpha + pulse, 255, 220, 120), Color.TRANSPARENT),
+            null,
+            android.graphics.Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, w, h, sunPaint)
     }
 
     private fun drawLightning(canvas: Canvas) {
