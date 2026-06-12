@@ -91,15 +91,19 @@ data class HyperThemeContext(
 )
 
 @Composable
-fun currentHyperTheme(blurEnabled: Boolean = true): HyperThemeContext {
+fun currentHyperTheme(blurEnabled: Boolean = true, blurRadius: Float = 34f): HyperThemeContext {
     val isDark = isSystemInDarkTheme()
     val colorScheme = MaterialTheme.colorScheme
+    val blurRatio = if (blurEnabled) (blurRadius / 150f).coerceIn(0f, 1f) else 0f
+    val cardAlphaDark  = 0.85f - blurRatio * 0.35f
+    val cardAlphaLight = 0.93f - blurRatio * 0.23f
 
     return HyperThemeContext(
         BgDeep = if (blurEnabled) Color.Transparent
                  else if (isDark) colorScheme.surface else colorScheme.background,
         BgCard = if (blurEnabled) {
-            if (isDark) colorScheme.surface.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.12f)
+            if (isDark) colorScheme.surface.copy(alpha = cardAlphaDark)
+            else colorScheme.surface.copy(alpha = cardAlphaLight)
         } else {
             if (isDark) colorScheme.surfaceContainerHigh else colorScheme.surfaceContainerLow
         },
@@ -119,13 +123,14 @@ fun PackageInstallerScreen(
     appInfo: AppInfoData,
     initialPhase: InstallerPhase = InstallerPhase.CONFIRM,
     blurEnabled: Boolean = true,
+    blurRadius: Float = 34f,
     onInstallConfirmed: () -> Unit = {},
     onOpenApp: () -> Unit = {},
     onDismiss: () -> Unit = {},
 ) {
     var phase by remember { mutableStateOf(initialPhase) }
     val progress by remember { mutableFloatStateOf(0f) }
-    val theme = currentHyperTheme(blurEnabled)
+    val theme = currentHyperTheme(blurEnabled, blurRadius)
 
     Box(
         modifier = Modifier.fillMaxSize().background(theme.BgDeep),
@@ -263,7 +268,9 @@ fun PillBanner(label: String, color: Color, textColor: Color) {
             color = color,
             fontSize = 13.sp,
             fontWeight = FontWeight.Black,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -326,10 +333,27 @@ fun CompactInfoChipRow(chips: List<Pair<String, String>>, theme: HyperThemeConte
                     .padding(vertical = 8.dp, horizontal = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(label, color = theme.TextTertiary, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        label,
+                        color = theme.TextTertiary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Spacer(Modifier.height(2.dp))
-                    Text(value, color = theme.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                    Text(
+                        value,
+                        color = theme.TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -342,12 +366,17 @@ fun CompactTransitionRow(label: String, from: String, to: String, theme: HyperTh
         Text(label, color = theme.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Row(
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            MetaChip(theme, from, isAccent = false)
-            Text("→", color = theme.Accent, fontSize = 16.sp, fontWeight = FontWeight.Black)
-            MetaChip(theme, to, isAccent = true)
+            Box(Modifier.weight(1f)) {
+                MetaChip(theme, from, isAccent = false, modifier = Modifier.fillMaxWidth())
+            }
+            Text("\u2192", color = theme.Accent, fontSize = 16.sp, fontWeight = FontWeight.Black)
+            Box(Modifier.weight(1f)) {
+                MetaChip(theme, to, isAccent = true, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }
@@ -577,15 +606,27 @@ fun UninstallFailedSheet(theme: HyperThemeContext, app: AppInfoData, onRetry: ()
 }
 
 @Composable
-fun MetaChip(theme: HyperThemeContext, label: String, isAccent: Boolean = false) {
+fun MetaChip(
+    theme: HyperThemeContext,
+    label: String,
+    isAccent: Boolean = false,
+    modifier: Modifier = Modifier
+) {
     Box(
-        Modifier
+        modifier
             .clip(CircleShape)
             .background(if (isAccent) theme.Accent.copy(alpha = 0.18f) else theme.BgGlass)
             .border(1.2.dp, if (isAccent) theme.Accent.copy(alpha = 0.35f) else theme.BgGlassBorder, CircleShape)
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Text(label, color = if (isAccent) theme.Accent else theme.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Black)
+        Text(
+            label,
+            color = if (isAccent) theme.Accent else theme.TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Black,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 

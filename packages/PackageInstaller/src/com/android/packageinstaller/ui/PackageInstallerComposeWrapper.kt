@@ -88,6 +88,7 @@ object PackageInstallerComposeBridge {
                         appInfo = appInfo,
                         initialPhase = initialPhase,
                         blurEnabled = blurEnabled,
+                        blurRadius = systemBlurRadius,
                         onInstallConfirmed = onInstallConfirmed,
                         onOpenApp = onOpenApp,
                         onDismiss = onCancel
