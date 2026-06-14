@@ -123,6 +123,19 @@ class DepthClockOverlayView @JvmOverloads constructor(
         cachedLauncherScale = resolveLauncherWallpaperScale()
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        refreshCachedSettings()
+        refreshSubjectAsync()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0 && (w != oldw || h != oldh)) {
+            refreshSubjectAsync()
+        }
+    }
+
     private var hideOnAod = false
     fun setHideOnAod(hide: Boolean) {
         if (hideOnAod != hide) {
