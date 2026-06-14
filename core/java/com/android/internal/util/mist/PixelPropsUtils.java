@@ -296,7 +296,6 @@ public final class PixelPropsUtils {
 
         final String packageName = context.getPackageName();
         final String processName = Application.getProcessName();
-
         if (packageName == null || processName == null || packageName.isEmpty()) {
             return;
         }

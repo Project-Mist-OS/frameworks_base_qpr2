@@ -2,7 +2,6 @@ package android.security.pif;
 
 import android.app.ActivityManager;
 import android.app.ActivityThread;
-import android.app.IActivityManager;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
@@ -92,16 +91,10 @@ public final class PlayIntegritySpoofService {
         mSystemProps.clear();
         mConfigLoaded = false;
 
-        IActivityManager am = ActivityManager.getService();
-        if (am == null) {
-            Log.w(TAG, "ActivityManager not ready, skipping PIF config load");
-            return;
-        }
-
         String content;
         try {
-            content = am.getSpoofPifConfig();
-        } catch (Throwable e) {
+            content = ActivityManager.getService().getSpoofPifConfig();
+        } catch (RemoteException e) {
             Log.e(TAG, "Failed to fetch PIF config from system_server", e);
             return;
         }
@@ -129,8 +122,10 @@ public final class PlayIntegritySpoofService {
             if (secPatch != null && !secPatch.isEmpty()) {
                 mSystemProps.put("ro.build.version.security_patch", secPatch);
                 mSystemProps.put("ro.vendor.build.security_patch", secPatch);
+                mSystemProps.put("ro.system.build.version.security_patch", secPatch);
+                mSystemProps.put("ro.product.build.version.security_patch", secPatch);
             }
-        } catch (Throwable e) {
+        } catch (Exception e) {
             Log.e(TAG, "Failed to load PIF config", e);
         }
     }
@@ -436,7 +431,7 @@ public final class PlayIntegritySpoofService {
     }
 
     public String getSpoofedProperty(String key) {
-        if (key == null || !mSpoofProps || !mConfigLoaded) return null;
+        if (!mSpoofProps || !mConfigLoaded) return null;
 
         String value = mSystemProps.get(key);
         if (value != null) return value;
