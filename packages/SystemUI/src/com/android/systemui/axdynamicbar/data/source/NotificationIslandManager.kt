@@ -370,15 +370,18 @@ constructor(
                             progressMax > 0 &&
                             progressRaw >= 0)
 
-                if (sbn.isOngoing && hasProgress) {
+                val isComplete = !indeterminate && progressMax > 0 && progressRaw >= progressMax
+                val isEffectivelyOngoing = sbn.isOngoing && !isComplete
+
+                if (isEffectivelyOngoing && hasProgress) {
                     if ("promoted_ongoing" !in disabledTypes) handlePromotedOngoing(sbn, extras, pkg)
                     return
                 }
-                if (!sbn.isOngoing) {
+                if (!isEffectivelyOngoing) {
                     _promotedOngoingEvents.value =
                         _promotedOngoingEvents.value.filter { it.sbn.key != sbn.key }
                 }
-                if (sbn.isOngoing) return
+                if (isEffectivelyOngoing) return
                 if ("notification" in disabledTypes) return
                 val category = sbn.notification?.category
                 if (category == Notification.CATEGORY_TRANSPORT) return
@@ -973,4 +976,3 @@ constructor(
             }
     }
 }
-

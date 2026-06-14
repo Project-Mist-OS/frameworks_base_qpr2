@@ -75,10 +75,13 @@ sealed class IslandEvent(open val priority: Int, val id: String) : Comparable<Is
         val deviceIcon: Drawable? = null,
         val deviceTypeLabel: String = "",
     ) : IslandEvent(priority = 60, id = "bluetooth") {
+        override val behavior = EventBehavior(autoDismissMs = 3000L)
         override fun withoutDrawables() = copy(deviceIcon = null)
     }
 
-    data class Hotspot(val numDevices: Int) : IslandEvent(priority = 55, id = "hotspot")
+    data class Hotspot(val numDevices: Int) : IslandEvent(priority = 55, id = "hotspot") {
+        override val behavior = EventBehavior(autoDismissMs = 3000L)
+    }
 
     data class Charging(
         val level: Int,
@@ -108,7 +111,9 @@ sealed class IslandEvent(open val priority: Int, val id: String) : Comparable<Is
     }
 
     data class Vpn(val isBranded: Boolean = false, val isValidated: Boolean = false) :
-        IslandEvent(priority = 35, id = "vpn")
+        IslandEvent(priority = 35, id = "vpn") {
+        override val behavior = EventBehavior(autoDismissMs = 3000L)
+    }
 
     data class ClipboardItem(
         val id: Long,
@@ -127,7 +132,9 @@ sealed class IslandEvent(open val priority: Int, val id: String) : Comparable<Is
         val isImage: Boolean = false,
         val imageUri: Uri? = null,
         val items: List<ClipboardItem> = emptyList(),
-    ) : IslandEvent(priority = 25, id = "clipboard")
+    ) : IslandEvent(priority = 25, id = "clipboard") {
+        override val behavior = EventBehavior(autoDismissMs = 6000L)
+    }
 
     data class PromotedOngoing(
         val shortText: String = "",
@@ -273,7 +280,7 @@ sealed class IslandEvent(open val priority: Int, val id: String) : Comparable<Is
         val isGroupSummary: Boolean = false,
         val createdAt: Long = System.currentTimeMillis(),
     ) : IslandEvent(priority = NOTIFICATION_STALE_PRIORITY, id = "notification_${sbn.key}") {
-        override val behavior = EventBehavior(autoDismissMs = null)
+        override val behavior = EventBehavior(autoDismissMs = NOTIFICATION_DECAY_MS)
         override val priority: Int
             get() =
                 if (System.currentTimeMillis() - createdAt < NOTIFICATION_DECAY_MS)
@@ -314,4 +321,3 @@ internal fun priorityForAospChipKey(key: String): Int = when {
     key == "CastToOtherDevice" -> 82
     else -> 70
 }
-

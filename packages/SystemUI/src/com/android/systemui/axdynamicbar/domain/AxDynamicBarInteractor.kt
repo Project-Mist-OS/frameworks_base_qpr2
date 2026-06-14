@@ -101,6 +101,11 @@ constructor(
         repository.notification.onAlarmEvent = {
             scheduleAutoDismiss(it, if (it.isRinging) 30_000L else 5_000L)
         }
+        repository.notification.onNotificationPosted = { scheduleAutoDismiss(it) }
+
+        repository.connectivity.onBluetoothEvent = { scheduleAutoDismiss(it) }
+        repository.connectivity.onHotspotEvent = { scheduleAutoDismiss(it) }
+        repository.connectivity.onVpnEvent = { scheduleAutoDismiss(it) }
 
         repository.media.onMediaSessionLost = { repository.media.clear() }
 

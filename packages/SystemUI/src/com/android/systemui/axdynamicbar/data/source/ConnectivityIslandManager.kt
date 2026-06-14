@@ -40,6 +40,10 @@ constructor(
     private val _vpnEvent = MutableStateFlow<IslandEvent.Vpn?>(null)
     val vpnEvent: StateFlow<IslandEvent.Vpn?> = _vpnEvent.asStateFlow()
 
+    var onBluetoothEvent: ((IslandEvent.Bluetooth) -> Unit)? = null
+    var onHotspotEvent: ((IslandEvent.Hotspot) -> Unit)? = null
+    var onVpnEvent: ((IslandEvent.Vpn) -> Unit)? = null
+
     private val previousBtAddresses = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private var listening = false
     private var wasVpnEnabled = false
@@ -78,6 +82,7 @@ constructor(
                             deviceTypeLabel = iconPair?.second ?: "",
                         )
                     _bluetoothEvent.value = event
+                    onBluetoothEvent?.invoke(event)
                 } else {
 
                     val current = _bluetoothEvent.value
@@ -92,7 +97,9 @@ constructor(
         object : HotspotController.Callback {
             override fun onHotspotChanged(enabled: Boolean, numDevices: Int) {
                 if (enabled) {
-                    _hotspotEvent.value = IslandEvent.Hotspot(numDevices = numDevices)
+                    val event = IslandEvent.Hotspot(numDevices = numDevices)
+                    _hotspotEvent.value = event
+                    onHotspotEvent?.invoke(event)
                 } else {
                     _hotspotEvent.value = null
                 }
@@ -106,7 +113,7 @@ constructor(
                 vpnInteractor.vpnState.collect { state ->
                     if (state.isEnabled) {
                         val existing = _vpnEvent.value
-                        _vpnEvent.value =
+                        val event =
                             if (existing != null) {
                                 existing.copy(
                                     isBranded = state.isBranded,
@@ -118,6 +125,8 @@ constructor(
                                     isValidated = state.isValidated,
                                 )
                             }
+                        _vpnEvent.value = event
+                        onVpnEvent?.invoke(event)
                     } else {
                         _vpnEvent.value = null
                     }
@@ -215,4 +224,3 @@ constructor(
         _vpnEvent.value = null
     }
 }
-
