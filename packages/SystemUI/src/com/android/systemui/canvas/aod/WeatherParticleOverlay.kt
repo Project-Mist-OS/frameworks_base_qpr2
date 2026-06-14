@@ -58,9 +58,13 @@ class WeatherParticleOverlay(
     private val onInvalidate: () -> Unit,
 ) {
 
+    private var isFrameScheduled = false
     var active: Boolean = false
-        set(value) { field = value; if (value) scheduleFrame() }
-
+        set(value) { 
+            if (field == value) return
+            field = value
+            if (value) scheduleFrame() 
+        }
     private var currentEffect = WeatherEffect.NONE
     private var intensityMultiplier = 1.0f
     private val rainPaint  = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
@@ -185,6 +189,7 @@ class WeatherParticleOverlay(
             Log.d(TAG, "Weather effect: $currentEffect (conditionCode=$code)")
             if (currentEffect != WeatherEffect.NONE && viewW > 1f) {
                 initParticles(viewW, viewH)
+                if (active) scheduleFrame()
             }
         } catch (e: Exception) {
             Log.w(TAG, "Weather query failed", e)
@@ -266,10 +271,13 @@ class WeatherParticleOverlay(
     private fun randomLightningDelay() = (8000L + Random.nextLong(12000L))
 
     private fun scheduleFrame() {
+        if (isFrameScheduled) return
+        isFrameScheduled = true
         choreographer.postFrameCallback(frameCallback)
     }
 
     private fun doFrame() {
+        isFrameScheduled = false
         if (!active || currentEffect == WeatherEffect.NONE) return
         updateParticles()
         onInvalidate()
