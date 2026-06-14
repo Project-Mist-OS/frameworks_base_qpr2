@@ -47,7 +47,6 @@ public class KeyBoxManager {
     private final Map<String, KeyBox> mKeyboxes = new ConcurrentHashMap<>();
     
     private static final Pattern PEM_HEADER = Pattern.compile("-----BEGIN ([^-]+)-----");
-    private static final Pattern XML_COMMENT = Pattern.compile("<!--.*?-->", Pattern.DOTALL);
 
     /** @hide */
     public static class KeyBox {
@@ -301,7 +300,7 @@ public class KeyBoxManager {
                 content = content.substring(bom.length());
             }
         }
-        content = XML_COMMENT.matcher(content).replaceAll("");
+        content = content.replaceAll("(?s)<!--.*?-->", "");
         return content.trim();
     }
 }
