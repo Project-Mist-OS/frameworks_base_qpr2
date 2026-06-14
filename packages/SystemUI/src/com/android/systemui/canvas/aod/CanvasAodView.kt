@@ -204,6 +204,7 @@ class CanvasAodView @JvmOverloads constructor(
                 visibility = View.VISIBLE
                 val bmp = canvasBitmap
                 if (bmp != null) startRevealAnimation(bmp)
+                handler.removeCallbacks(burnInRunnable)
                 handler.postDelayed(burnInRunnable, BURN_IN_INTERVAL_MS)
             } else {
                 visibility = View.INVISIBLE
