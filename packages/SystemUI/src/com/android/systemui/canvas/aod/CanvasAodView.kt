@@ -44,7 +44,9 @@ private const val SETTING_CACHE_PATH        = "canvas_aod_cache_path"
 private const val SETTING_STYLE             = "canvas_aod_style"
 private const val SETTING_ANIMATION_ENABLED = "canvas_aod_animation_enabled"
 private const val SETTING_ANIMATION_SPEED   = "canvas_aod_animation_speed"
+private const val SETTING_ANIMATION_TYPE    = "canvas_aod_animation_type"
 private const val SETTING_WEATHER_EFFECTS   = "canvas_aod_weather_effects"
+private const val SETTING_WEATHER_INTENSITY = "canvas_aod_weather_intensity"
 private const val SETTING_CHARGING_ANIM     = "canvas_aod_charging_animation"
 private const val SETTING_NOTIF_PULSE       = "canvas_aod_notification_pulse"
 
@@ -126,7 +128,9 @@ class CanvasAodView @JvmOverloads constructor(
             Settings.Secure.getUriFor(SETTING_STYLE),
             Settings.Secure.getUriFor(SETTING_ANIMATION_ENABLED),
             Settings.Secure.getUriFor(SETTING_ANIMATION_SPEED),
+            Settings.Secure.getUriFor(SETTING_ANIMATION_TYPE),
             Settings.Secure.getUriFor(SETTING_WEATHER_EFFECTS),
+            Settings.Secure.getUriFor(SETTING_WEATHER_INTENSITY),
             Settings.Secure.getUriFor(SETTING_CHARGING_ANIM),
             Settings.Secure.getUriFor(SETTING_NOTIF_PULSE),
         ).forEach { uri ->
