@@ -324,6 +324,9 @@ public class SharedConnectivityManager {
         } catch (RemoteException e) {
             Log.e(TAG, "Exception in registerCallback", e);
             callback.onRegisterCallbackFailed(e);
+        } catch (Exception e) {
+            Log.e(TAG, "Exception in registerCallback", e);
+            callback.onRegisterCallbackFailed(e);
         }
     }
 
