@@ -16,24 +16,10 @@
 
 package com.android.systemui.qs.panels.ui.compose
 
-import android.database.ContentObserver
-import android.os.Handler
-import android.os.Looper
-import android.os.UserHandle
-import android.provider.Settings
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import com.android.compose.animation.scene.ContentScope
 import com.android.systemui.qs.panels.ui.viewmodel.TileGridViewModel
-import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
-
-private val IOS_PANEL_HIDDEN_TILE_SPECS = setOf("internet", "wifi", "bt")
 
 /**
  * Displays a grid of tiles with an optional reveal animation.
@@ -47,42 +33,8 @@ fun ContentScope.TileGrid(
     listening: () -> Boolean = { true },
     enableRevealEffect: Boolean = false,
 ) {
-    val context = LocalContext.current
-    val cr = context.contentResolver
-
-    fun readIosPanelEnabled(): Boolean = try {
-        Settings.System.getIntForUser(
-            cr, "qs_ios_control_panel", 0, UserHandle.USER_CURRENT
-        ) == 1
-    } catch (_: Exception) { false }
-
-    var iosPanelEnabled by remember { mutableStateOf(readIosPanelEnabled()) }
-
-    DisposableEffect(Unit) {
-        val handler = Handler(Looper.getMainLooper())
-        val observer = object : ContentObserver(handler) {
-            override fun onChange(selfChange: Boolean) {
-                iosPanelEnabled = readIosPanelEnabled()
-            }
-        }
-        try {
-            cr.registerContentObserver(
-                Settings.System.getUriFor("qs_ios_control_panel"),
-                false, observer, UserHandle.USER_ALL,
-            )
-        } catch (_: Exception) {}
-        onDispose { cr.unregisterContentObserver(observer) }
-    }
-
     val gridLayout = viewModel.gridLayout
-    val allTiles: List<TileViewModel> = viewModel.tileViewModels
-
-    val tiles: List<TileViewModel> = if (iosPanelEnabled) {
-        allTiles.filter { it.spec.spec !in IOS_PANEL_HIDDEN_TILE_SPECS }
-    } else {
-        allTiles
-    }
-
+    val tiles = viewModel.tileViewModels
     with(gridLayout) {
         TileGrid(
             tiles = tiles,

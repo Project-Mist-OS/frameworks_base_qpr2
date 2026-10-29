@@ -35,15 +35,7 @@ import com.android.systemui.qs.panels.ui.viewmodel.BounceableTileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.QuickQuickSettingsViewModel
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements.toElementKey
 import com.android.systemui.res.R
-import android.database.ContentObserver
-import android.provider.Settings
-import android.os.Handler
-import android.os.Looper
-import android.os.UserHandle
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import android.content.Context
+
 @Composable
 fun ContentScope.QuickQuickSettings(
     viewModel: QuickQuickSettingsViewModel,
@@ -51,46 +43,10 @@ fun ContentScope.QuickQuickSettings(
     listening: () -> Boolean,
 ) {
     val columns = viewModel.columns
+    val sizedTiles = viewModel.tileViewModels
+    val tiles = sizedTiles.fastMap { it.tile }
     val squishiness by viewModel.squishinessViewModel.squishiness.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val cr = context.contentResolver
-
-    fun readIosPanelEnabled(): Boolean = try {
-        Settings.System.getIntForUser(
-            cr, "qs_ios_control_panel", 0, UserHandle.USER_CURRENT
-        ) == 1
-    } catch (_: Exception) { false }
-
-    var iosPanelEnabled by remember { mutableStateOf(readIosPanelEnabled()) }
-
-    DisposableEffect(Unit) {
-        val handler = Handler(Looper.getMainLooper())
-        val observer = object : ContentObserver(handler) {
-            override fun onChange(selfChange: Boolean) {
-                iosPanelEnabled = readIosPanelEnabled()
-            }
-        }
-        try {
-            cr.registerContentObserver(
-                Settings.System.getUriFor("qs_ios_control_panel"),
-                false, observer, UserHandle.USER_ALL,
-            )
-        } catch (_: Exception) {}
-        onDispose { cr.unregisterContentObserver(observer) }
-    }
-
-    val allSizedTiles = viewModel.tileViewModels
-    val sizedTiles = if (iosPanelEnabled) {
-        val filtered = viewModel.allCurrentSizedTiles.filter { it.tile.spec.spec !in setOf("internet", "wifi", "bt") }
-        com.android.systemui.qs.panels.shared.model.splitInRowsSequence(filtered, columns)
-            .firstOrNull() ?: emptyList()
-    } else {
-        allSizedTiles
-    }
-
-    val tiles = sizedTiles.fastMap { it.tile }
 
     Box(modifier = modifier) {
         GridAnchor()

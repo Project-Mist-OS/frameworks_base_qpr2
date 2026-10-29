@@ -25,8 +25,6 @@ import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.Trace
 import android.os.UserHandle
 import android.provider.Settings
@@ -163,7 +161,6 @@ import com.android.systemui.qs.panels.ui.compose.EditMode
 import com.android.systemui.qs.panels.ui.compose.LocalAxQsExpansionProgress
 import com.android.systemui.qs.panels.ui.compose.QuickQuickSettings
 import com.android.systemui.qs.panels.ui.compose.TileGrid
-import com.android.systemui.qs.panels.ui.compose.IosControlPanel
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.ui.composable.QuickSettingsShade
 import com.android.systemui.qs.ui.composable.QuickSettingsShade.systemGestureExclusionInShade
@@ -175,7 +172,6 @@ import com.android.systemui.shade.ui.composable.WithStatusIconContext
 import com.android.systemui.shade.ui.viewmodel.ShadeHeaderViewModel
 import com.android.systemui.statusbar.phone.ui.TintedIconManager
 import com.android.systemui.statusbar.policy.ConfigurationController
-import androidx.compose.ui.zIndex
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener
 import com.android.systemui.util.LifecycleFragment
@@ -215,8 +211,6 @@ import com.android.settingslib.volume.shared.model.AudioStream
 import com.android.systemui.qs.tiles.ringer.LocalRingerSliderViewModel
 import com.android.systemui.qs.tiles.ringer.RingerSliderViewModel
 import com.android.systemui.volume.panel.component.volume.slider.ui.viewmodel.AudioStreamSliderViewModel
-
-val IosControlPanelElementKey = com.android.compose.animation.scene.ElementKey("IosControlPanel")
 
 val LocalBlurEnabled = staticCompositionLocalOf { false }
 
@@ -1062,29 +1056,7 @@ constructor(
             }
         val Media =
             @Composable {
-                val cr = LocalContext.current.contentResolver
-                var stockMediaEnabled by remember {
-                    mutableStateOf(
-                        Settings.System.getIntForUser(
-                            cr, "qs_stock_media_player", 0, UserHandle.USER_CURRENT
-                        ) == 0
-                    )
-                }
-                DisposableEffect(Unit) {
-                    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                        override fun onChange(selfChange: Boolean) {
-                            stockMediaEnabled = Settings.System.getIntForUser(
-                                cr, "qs_stock_media_player", 0, UserHandle.USER_CURRENT
-                            ) == 0
-                        }
-                    }
-                    cr.registerContentObserver(
-                        Settings.System.getUriFor("qs_stock_media_player"), false, observer, UserHandle.USER_ALL
-                    )
-                    onDispose { cr.unregisterContentObserver(observer) }
-                }
-
-                if (stockMediaEnabled && viewModel.qqsMediaVisible) {
+                if (viewModel.qqsMediaVisible) {
                     MediaObject(
                         // In order to have stable constraints passed to the AndroidView
                         // during expansion (available height changing due to squishiness),
@@ -1120,35 +1092,12 @@ constructor(
                     )
                     .padding(horizontal = qsHorizontalMargin())
         ) {
-            Column {
-                val containerViewModel = viewModel.containerViewModel
-                val allTiles = containerViewModel.tileGridViewModel.tileViewModels
-                val internetTileVM = allTiles.find { it.spec.spec == "internet" }
-                    ?: allTiles.find { it.spec.spec == "wifi" }
-                val btTileVM = allTiles.find { it.spec.spec == "bt" }
-
-                QuickSettingsTheme {
-                    Box(modifier = Modifier.padding(horizontal = 0.dp)) {
-                        Element(
-                            IosControlPanelElementKey,
-                            modifier = Modifier.fillMaxWidth().zIndex(1f),
-                        ) {
-                            IosControlPanel(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                                internetTile = internetTileVM,
-                                btTile = btTileVM,
-                            )
-                        }
-                    }
-                }
-
-                QuickQuickSettingsLayout(
-                    brightness = BrightnessSlider,
-                    tiles = Tiles,
-                    media = Media,
-                    mediaInRow = viewModel.qqsMediaInRow,
-                )
-            }
+            QuickQuickSettingsLayout(
+                brightness = BrightnessSlider,
+                tiles = Tiles,
+                media = Media,
+                mediaInRow = viewModel.qqsMediaInRow,
+            )
         }
     }
 
@@ -1203,25 +1152,6 @@ constructor(
             ) {
                 val containerViewModel = viewModel.containerViewModel
                 Spacer(modifier = Modifier.height { qqsPadding + qsExtraPadding.roundToPx() })
-                val allTiles = containerViewModel.tileGridViewModel.tileViewModels
-                val internetTileVM = allTiles.find { it.spec.spec == "internet" }
-                    ?: allTiles.find { it.spec.spec == "wifi" }
-                val btTileVM = allTiles.find { it.spec.spec == "bt" }
-
-                QuickSettingsTheme {
-                    Box(modifier = Modifier.padding(horizontal = qsHorizontalMargin())) {
-                        Element(
-                            IosControlPanelElementKey,
-                            modifier = Modifier.fillMaxWidth().zIndex(1f),
-                        ) {
-                            IosControlPanel(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                                internetTile = internetTileVM,
-                                btTile = btTileVM,
-                            )
-                        }
-                    }
-                }
                 val BrightnessSlider: @Composable () -> Unit = {
                     Element(Elements.BrightnessSlider, modifier = Modifier) {
                         BrightnessSlider(viewModel, layoutState)
@@ -1256,29 +1186,7 @@ constructor(
                     }
                 val Media =
                     @Composable {
-                        val cr = LocalContext.current.contentResolver
-                        var stockMediaEnabled by remember {
-                            mutableStateOf(
-                                Settings.System.getIntForUser(
-                                    cr, "qs_stock_media_player", 0, UserHandle.USER_CURRENT
-                                ) == 0
-                            )
-                        }
-                        DisposableEffect(Unit) {
-                            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                                override fun onChange(selfChange: Boolean) {
-                                    stockMediaEnabled = Settings.System.getIntForUser(
-                                        cr, "qs_stock_media_player", 0, UserHandle.USER_CURRENT
-                                    ) == 0
-                                }
-                            }
-                            cr.registerContentObserver(
-                                Settings.System.getUriFor("qs_stock_media_player"), false, observer, UserHandle.USER_ALL
-                            )
-                            onDispose { cr.unregisterContentObserver(observer) }
-                        }
-
-                        if (stockMediaEnabled && viewModel.qsMediaVisible) {
+                        if (viewModel.qsMediaVisible) {
                             MediaObject(
                                 modifier = Modifier.requiredHeightIn(max = Dp.Infinity),
                                 mediaHost = viewModel.qsMediaHost,
