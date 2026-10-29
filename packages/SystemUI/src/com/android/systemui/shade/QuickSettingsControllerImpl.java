@@ -1053,7 +1053,8 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
             mShadeLog.logQsExpandImmediateChanged(expandImmediate);
             mShadeRepository.setLegacyExpandImmediate(expandImmediate);
         }
-        if (!expandImmediate || mAxQsShadePolicy.isSeparateShade()) {
+        if (mAxQsShadePolicy.isCustomStyle()
+                && (!expandImmediate || mAxQsShadePolicy.isSeparateShade())) {
             mNotificationStackScrollLayoutController.setQuickQsHidden(expandImmediate);
         }
     }
@@ -1784,7 +1785,9 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
                 mQs.setForceQsEvent(true);
             }
             setExpandImmediate(true);
-            mNotificationStackScrollLayoutController.setQuickQsHidden(true);
+            if (mAxQsShadePolicy.isCustomStyle()) {
+                mNotificationStackScrollLayoutController.setQuickQsHidden(true);
+            }
             mNotificationStackScrollLayoutController.setShouldShowShelfOnly(!mSplitShadeEnabled);
             if (mExpansionHeightSetToMaxListener != null) {
                 mExpansionHeightSetToMaxListener.onExpansionHeightSetToMax(false);
@@ -2167,7 +2170,11 @@ public class QuickSettingsControllerImpl implements QuickSettingsController, Dum
     }
 
     private void maybeResetEarlyExpansion() {
-        updateQsState();
+        if (mAxQsShadePolicy.isCustomStyle()) {
+            updateQsState();
+        } else {
+            resetEarlyExpansion();
+        }
     }
 
     private void resetEarlyExpansion() {

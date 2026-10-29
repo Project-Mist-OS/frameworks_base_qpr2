@@ -55,15 +55,25 @@ constructor(
     private val customStyle =
         repository.customStyle.stateIn(applicationScope, SharingStarted.Eagerly, false)
 
+    private var separateShadeCollapsing = false
+
     init {
         shadeAnimationInteractor.isAnyCloseAnimationRunning
             .onEach { collapsing ->
-                notificationStackScrollLayoutController
-                    .get()
-                    .setSeparateShadeCollapsing(collapsing && isSeparateShade())
+                val separateCollapsing = collapsing && isSeparateShade()
+                // Don't touch the notification stack visibility unless the custom style needs it.
+                if (separateCollapsing || separateShadeCollapsing) {
+                    separateShadeCollapsing = separateCollapsing
+                    notificationStackScrollLayoutController
+                        .get()
+                        .setSeparateShadeCollapsing(separateCollapsing)
+                }
             }
             .launchIn(applicationScope)
     }
+
+    /** Whether the Mistify custom QS style is selected. When false, stock Android QS is used. */
+    fun isCustomStyle(): Boolean = customStyle.value
 
     fun isSeparateShade(): Boolean =
         customStyle.value &&
