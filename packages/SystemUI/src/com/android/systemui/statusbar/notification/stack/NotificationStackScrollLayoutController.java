@@ -403,6 +403,9 @@ public class NotificationStackScrollLayoutController implements Dumpable {
         @Override
         public void onUserChanged(int userId) {
             mView.resetLockscreenNotificationStack();
+            if (mView.getShelf() instanceof NotificationShelf shelf) {
+                shelf.onUserChanged();
+            }
             updateSensitivenessWithAnimation(false);
             mHistoryEnabled = null;
         }
@@ -1044,6 +1047,11 @@ public class NotificationStackScrollLayoutController implements Dumpable {
             mView.requestChildrenUpdate();
             return kotlin.Unit.INSTANCE;
         });
+        if (!SceneContainerFlag.isEnabled()) {
+            // Hide the keyguard media player while the Moto compact design previews an app.
+            mView.setMotoCompactPreviewListener(
+                    mKeyguardMediaController::setNotificationPreviewVisible);
+        }
 
         if (screenshareNotificationHiding()) {
             mSensitiveNotificationProtectionController

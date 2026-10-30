@@ -211,7 +211,8 @@ constructor(
         val isSplitShade =
             if (SceneContainerFlag.isEnabled) shadeModeInteractor.isSplitShade
             else splitShadeStateController.shouldUseSplitNotificationShade(resources)
-        val isMediaShowingInStack = isMediaShowing && !isSplitShade
+        val isMediaShowingInStack =
+            isMediaShowing && !stack.isMotoCompactPreviewVisible && !isSplitShade
 
         log { "\tGet maxNotifWithoutSavingSpace ---" }
         val maxNotifWithoutSavingSpace =
@@ -266,7 +267,7 @@ constructor(
             }
         }
 
-        if (onLockscreen()) {
+        if (onLockscreen() && !stack.isMotoCompactDesignActive) {
             val increaseMaxForMedia = maxNotificationsExcludesMedia && isMediaShowingInStack
             val lockscreenMax = maxKeyguardNotifications.safeIncrementIf(increaseMaxForMedia)
             maxNotifications = min(lockscreenMax, maxNotifications)
@@ -374,13 +375,16 @@ constructor(
         stack: NotificationStackScrollLayout,
         shelfHeight: Float,
     ): Sequence<StackHeight> = sequence {
-        val children = stack.showableChildren().toList()
+        val children = stack.showableChildren().toMutableList()
+        stack.orderMotoCompactNotifications(children)
         var notifications = 0f
         var notifsWithCollapsedHun = 0f
         var previous: ExpandableView? = null
         val onLockscreen = onLockscreen()
 
-        val counter = if (limitLockScreenToOneImportant) BucketTypeCounter() else null
+        val motoCompact = stack.isMotoCompactDesignActive
+        val counter =
+            if (limitLockScreenToOneImportant && !motoCompact) BucketTypeCounter() else null
 
         // Only shelf. This should never happen, since we allow 1 view minimum (EmptyViewState).
         yield(
@@ -400,8 +404,10 @@ constructor(
             previous = currentNotification
 
             val shelfWithSpaceBefore =
-                if (i == children.lastIndex) {
+                if (i == children.lastIndex && !motoCompact) {
                     0f // No shelf needed.
+                } else if (i == children.lastIndex) {
+                    dividerHeight + shelfHeight // Keep the selected app's icon below its cards.
                 } else {
                     val firstViewInShelfIndex = i + 1
                     val spaceBeforeShelf =
@@ -479,12 +485,15 @@ constructor(
         val gapAndDividerHeight =
             calculateGapAndDividerHeight(stack, previousView, current = view, visibleIndex)
         val canPeek = view is ExpandableNotificationRow && view.entryAdapter?.canPeek() == true
+        val isMotoPreview =
+            stack.isMotoCompactDesignActive && stack.isMotoCompactNotificationSelected(view)
 
         var size =
             if (onLockscreen) {
                 if (
                     view is ExpandableNotificationRow &&
-                        (canPeek ||
+                        (isMotoPreview ||
+                            canPeek ||
                             view.isPromotedOngoing ||
                             (view.isBundle && view.isGroupExpanded) ||
                             (SceneContainerFlag.isEnabled &&
@@ -500,7 +509,7 @@ constructor(
         size += gapAndDividerHeight
 
         var sizeWhenSavingSpace =
-            if (onLockscreen) {
+            if (onLockscreen && !stack.isMotoCompactDesignActive) {
                 view.getMinHeight(/* ignoreTemporaryStates= */ true).toFloat()
             } else {
                 height
@@ -547,7 +556,12 @@ constructor(
     }
 
     private fun NotificationStackScrollLayout.showableChildren() =
-        this.childrenSequence.filter { it.isShowable(onLockscreen()) }
+        this.childrenSequence.filter {
+            it.isShowable(onLockscreen()) &&
+                (!isMotoCompactDesignActive ||
+                    it is MediaContainerView ||
+                    isMotoCompactNotificationSelected(it))
+        }
 
     /**
      * Can a view be shown on the lockscreen when calculating the number of allowed notifications to

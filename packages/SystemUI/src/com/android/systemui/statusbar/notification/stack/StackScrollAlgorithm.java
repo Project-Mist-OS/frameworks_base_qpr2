@@ -509,6 +509,15 @@ public class StackScrollAlgorithm {
             }
         }
 
+        if (mHostView instanceof NotificationStackScrollLayout stack
+                && stack.isMotoCompactDesignActive()) {
+            stack.orderMotoCompactNotifications(state.visibleChildren);
+            notGoneIndex = 0;
+            for (ExpandableView view : state.visibleChildren) {
+                notGoneIndex = updateNotGoneIndex(notGoneIndex, view);
+            }
+        }
+
         // Save the index of first view in shelf from when shade is fully
         // expanded. Consider updating these states in updateContentView instead so that we don't
         // have to recalculate in every frame.
@@ -703,6 +712,9 @@ public class StackScrollAlgorithm {
         float stackTop = SceneContainerFlag.isEnabled()
                 ? ambientState.getStackScrollTop()
                 : ambientState.getStackY();
+        if (mHostView instanceof NotificationStackScrollLayout stack) {
+            stackTop -= stack.getMotoCompactPreviewTopOffset();
+        }
         float viewEnd = stackTop + viewState.getYTranslation() + viewState.height;
         maybeUpdateHeadsUpIsVisible(viewState, ambientState.isShadeExpanded(),
                 view.mustStayOnScreen(),
@@ -762,7 +774,9 @@ public class StackScrollAlgorithm {
                     //  to use the innerHeight which doesn't update continuously, otherwise we show
                     //  more notifications than we should during this special transitional states.
                     boolean bypassPulseNotExpanding = ambientState.isBypassEnabled()
-                            && ambientState.isOnKeyguard() && !ambientState.isPulseExpanding();
+                            && ambientState.isOnKeyguard() && !ambientState.isPulseExpanding()
+                            && !(mHostView instanceof NotificationStackScrollLayout stack
+                                    && stack.isMotoCompactPreviewVisible());
                     final float stackBottom = !ambientState.isShadeExpanded()
                             || ambientState.getDozeAmount() == 1f
                             || bypassPulseNotExpanding

@@ -42,6 +42,7 @@ import static com.android.systemui.util.DumpUtilsKt.visibilityString;
 
 import static java.lang.annotation.RetentionPolicy.SOURCE;
 
+import android.animation.ValueAnimator;
 import android.annotation.ColorInt;
 import android.annotation.FloatRange;
 import android.annotation.IntDef;
@@ -63,6 +64,7 @@ import android.graphics.Shader;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.os.Trace;
+import android.os.UserHandle;
 import android.util.AttributeSet;
 import android.util.IndentingPrintWriter;
 import android.util.Log;
@@ -102,6 +104,7 @@ import com.android.systemui.scene.shared.flag.SceneContainerFlag;
 import com.android.systemui.shade.QSHeaderBoundsProvider;
 import com.android.systemui.shade.TouchLogger;
 import com.android.systemui.statusbar.NotificationShelf;
+import com.android.systemui.statusbar.StatusBarIconView;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.notification.ColorUpdateLogger;
 import com.android.systemui.statusbar.notification.FakeShadowView;
@@ -364,6 +367,15 @@ public class NotificationStackScrollLayout
     @Nullable private NotificationStackScrollLogger mLogger;
     private Runnable mResetUserExpandedStatesRunnable;
     private final int[] mTempInt2 = new int[2];
+    // State of the Moto compact design: the app whose notifications are previewed above the shelf.
+    private String mMotoCompactPackage;
+    private int mMotoCompactUserId = UserHandle.USER_NULL;
+    private final ArrayList<ExpandableNotificationRow> mMotoCompactExpandedRows = new ArrayList<>();
+    private final ArrayList<ExpandableNotificationRow> mMotoCompactPreviewRows = new ArrayList<>();
+    private final MotoCompactNotificationAnimator mMotoCompactAnimator =
+            new MotoCompactNotificationAnimator(this);
+    private StatusBarIconView mMotoCompactIcon;
+    private Consumer<Boolean> mMotoCompactPreviewListener;
     private final float[] mTempFloat2 = new float[2];
     private final HashSet<Runnable> mAnimationFinishedRunnables = new HashSet<>();
     private final HashSet<ExpandableView> mClearTransientViewsWhenFinished = new HashSet<>();
@@ -1466,6 +1478,9 @@ public class NotificationStackScrollLayout
      */
     private void updateChildren() {
         Trace.beginSection("NSSL#updateChildren");
+        if (mMotoCompactPackage != null && !isMotoCompactDesignActive()) {
+            finishMotoCompactSelection();
+        }
         updateScrollStateForAddedChildren();
         mAmbientState.setCurrentScrollVelocity(mScroller.isFinished()
                 ? 0
@@ -2913,7 +2928,8 @@ public class NotificationStackScrollLayout
         // The topPadding can be bigger than the regular padding when qs is expanded, in that
         // state the maxPanelHeight and the contentHeight should be bigger
         setContentHeight(
-                (int) (height + Math.max(getIntrinsicPadding(), getTopPadding()) + mBottomPadding));
+                (int) (height + Math.max(getIntrinsicPadding(), getTopPadding())
+                        - getMotoCompactPreviewTopOffset() + mBottomPadding));
         updateScrollability();
         clampScrollPosition();
         updateStackPosition();
@@ -3514,6 +3530,11 @@ public class NotificationStackScrollLayout
         mAnimationsEnabled = animationsEnabled;
         updateNotificationAnimationStates();
         if (!animationsEnabled) {
+            if (mMotoCompactAnimator.isCollapsing()) {
+                finishMotoCompactCollapse();
+            } else {
+                mMotoCompactAnimator.cancel();
+            }
             mSwipedOutViews.clear();
             mChildrenToRemoveAnimated.clear();
             clearTemporaryViewsInGroup(
@@ -4047,7 +4068,7 @@ public class NotificationStackScrollLayout
         }
         return x < bounds.getLeft()
                 || x > bounds.getRight()
-                || y < bounds.getTop()
+                || y < bounds.getTop() - getMotoCompactPreviewTopOffset()
                 || y > boundsBottom;
     }
 
@@ -4082,6 +4103,7 @@ public class NotificationStackScrollLayout
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
+        closeMotoCompactPreviewIfOutsideTouch(ev);
         final boolean collapseStack = handleLockscreenStackCollapseTouch(ev);
         MotionEvent dispatchedEvent = ev;
         if (collapseStack) {
@@ -5502,6 +5524,9 @@ public class NotificationStackScrollLayout
             return;
         }
         mAmbientState.setDozing(dozing);
+        if (dozing) {
+            finishMotoCompactSelection();
+        }
         requestChildrenUpdate();
         notifyHeightChangeListener(mShelf);
     }
@@ -6170,8 +6195,9 @@ public class NotificationStackScrollLayout
     }
 
     public float getLockscreenNotificationAvailableHeight(float defaultHeight) {
+        final float previewTopOffset = getMotoCompactPreviewTopOffset();
         if (!areLockscreenNotificationsBottomAnchored()) {
-            return defaultHeight;
+            return defaultHeight + previewTopOffset;
         }
         final View root = getRootView();
         root.getLocationOnScreen(mTempInt2);
@@ -6179,15 +6205,40 @@ public class NotificationStackScrollLayout
         getLocationOnScreen(mTempInt2);
         // Exclude the view's animated translation so the anchor follows lock screen transitions.
         final float viewTop = mTempInt2[1] - rootTop - getTranslationY();
-        final float stackTop = SceneContainerFlag.isEnabled()
-                ? mAmbientState.getStackScrollTop() : mAmbientState.getTopPadding();
+        final float stackTop = (SceneContainerFlag.isEnabled()
+                ? mAmbientState.getStackScrollTop() : mAmbientState.getTopPadding())
+                - previewTopOffset;
         final WindowInsets insets = root.getRootWindowInsets();
         final int bottomInset = insets != null ? insets.getInsetsIgnoringVisibility(
                 WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()).bottom : 0;
         final float height = mStackScrollAlgorithm.getLockscreenNotificationStack()
-                .getAvailableHeight(defaultHeight, root.getHeight(), viewTop, stackTop, bottomInset);
+                .getAvailableHeight(defaultHeight + previewTopOffset, root.getHeight(), viewTop,
+                        stackTop, bottomInset);
         requestChildrenUpdate();
         return height;
+    }
+
+    /**
+     * While the notifications of an app are previewed above the shelf, the stack grows upwards
+     * into the space the status bar leaves free, so the shelf and its icons stay in place.
+     *
+     * @return how far the top of the stack moves up, or 0 if no preview is visible
+     */
+    public float getMotoCompactPreviewTopOffset() {
+        if (!isMotoCompactPreviewVisible()) return 0f;
+        final View root = getRootView();
+        root.getLocationOnScreen(mTempInt2);
+        final int rootTop = mTempInt2[1];
+        getLocationOnScreen(mTempInt2);
+        final float viewTop = mTempInt2[1] - rootTop - getTranslationY();
+        final WindowInsets insets = root.getRootWindowInsets();
+        final int topInset = insets != null ? insets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()).top
+                : SystemBarUtils.getStatusBarHeight(mContext);
+        final float previewTop = Math.max(0f, topInset + mPaddingBetweenElements - viewTop);
+        final float stackTop = SceneContainerFlag.isEnabled()
+                ? mAmbientState.getStackScrollTop() : mAmbientState.getTopPadding();
+        return Math.max(0f, stackTop - previewTop);
     }
 
     private void requestAnimateLockscreenNotificationStack() {
@@ -6199,8 +6250,183 @@ public class NotificationStackScrollLayout
     }
 
     void resetLockscreenNotificationStack() {
+        finishMotoCompactSelection();
         mCollapseStackOnTouchUp = false;
         mStackScrollAlgorithm.getLockscreenNotificationStack().reset();
+        requestChildrenUpdate();
+    }
+
+    /**
+     * @return whether the Moto compact design is selected and the lock screen currently shows the
+     *         compact notifications, rather than being pulsing, dozing or going to the shade
+     */
+    public boolean isMotoCompactDesignActive() {
+        return mShelf != null && mShelf.isMotoCompactDesignEnabled()
+                && mStackScrollAlgorithm != null
+                && (SceneContainerFlag.isEnabled() ? mIsOnLockscreen : onKeyguard())
+                && !mAmbientState.isPulsing() && !mAmbientState.isPulseExpanding()
+                && mAmbientState.getFractionToShade() == 0f;
+    }
+
+    public boolean isMotoCompactPreviewVisible() {
+        return isMotoCompactDesignActive() && mMotoCompactPackage != null;
+    }
+
+    public void setMotoCompactPreviewListener(Consumer<Boolean> listener) {
+        mMotoCompactPreviewListener = listener;
+        listener.accept(isMotoCompactPreviewVisible());
+    }
+
+    /** Collapses the preview when the user touches anything but the shelf icons or the cards. */
+    public void closeMotoCompactPreviewIfOutsideTouch(MotionEvent event) {
+        if (event.getActionMasked() != ACTION_DOWN || !isMotoCompactPreviewVisible()) return;
+        if (mShelf.getVisibility() == VISIBLE && mShelf.getAlpha() > 0f) {
+            mShelf.getLocationOnScreen(mTempInt2);
+            if (mShelf.getMotoIconAtPosition(event.getRawX() - mTempInt2[0],
+                    event.getRawY() - mTempInt2[1]) != null) {
+                return;
+            }
+        }
+        for (int i = 0; i < getChildCount(); i++) {
+            ExpandableView child = getChildAtIndex(i);
+            if (!isMotoCompactNotificationSelected(child) || child.getVisibility() != VISIBLE
+                    || child.getAlpha() == 0f) continue;
+            child.getLocationOnScreen(mTempInt2);
+            final float x = event.getRawX() - mTempInt2[0];
+            final float y = event.getRawY() - mTempInt2[1];
+            final float top = Math.max(child.getClipTopAmount(), child.getTopOverlap());
+            final float bottom = child.getActualHeight()
+                    - Math.max(child.getClipBottomAmount(), child.getBottomOverlap());
+            if (x >= 0f && x < child.getWidth() && y >= top && y < bottom) return;
+        }
+        clearMotoCompactSelection();
+    }
+
+    public boolean isMotoCompactAppSelected(StatusBarNotification notification) {
+        return notification != null && mMotoCompactPackage != null
+                && mMotoCompactPackage.equals(notification.getPackageName())
+                && mMotoCompactUserId == notification.getUserId();
+    }
+
+    public boolean isMotoCompactNotificationSelected(ExpandableView view) {
+        if (!(view instanceof ExpandableNotificationRow row)) return false;
+        final StatusBarIconView icon = row.getShelfIcon();
+        return icon != null && isMotoCompactAppSelected(icon.getNotification());
+    }
+
+    /** Keep selected app cards ahead of the rows collapsed into the shelf. */
+    public void orderMotoCompactNotifications(List<ExpandableView> children) {
+        if (isMotoCompactDesignActive()) {
+            children.sort(Comparator.comparingInt(
+                    view -> view instanceof MediaContainerView ? -1
+                            : isMotoCompactNotificationSelected(view) ? 0 : 1));
+        }
+    }
+
+    /** Previews the notifications of the app of [icon], or collapses them if already shown. */
+    public void toggleMotoCompactApp(StatusBarIconView icon) {
+        if (icon == null) return;
+        final StatusBarNotification notification = icon.getNotification();
+        if (!isMotoCompactDesignActive() || !isLockscreenNotificationLayoutActive()
+                || notification == null) return;
+        if (isMotoCompactAppSelected(notification)) {
+            if (mMotoCompactAnimator.isCollapsing()) {
+                mMotoCompactIcon = icon;
+                mMotoCompactAnimator.start(icon, mMotoCompactPreviewRows, true,
+                        this::finishMotoCompactCollapse);
+            } else {
+                clearMotoCompactSelection();
+            }
+            return;
+        }
+        mMotoCompactAnimator.cancel();
+        resetMotoCompactExpandedRows();
+        mMotoCompactPackage = notification.getPackageName();
+        mMotoCompactUserId = notification.getUserId();
+        mMotoCompactIcon = icon;
+        for (int i = 0; i < getChildCount(); i++) {
+            if (getChildAt(i) instanceof ExpandableNotificationRow row
+                    && row.getVisibility() != GONE && isMotoCompactNotificationSelected(row)) {
+                mMotoCompactPreviewRows.add(row);
+                row.setMotoCompactPreview(true);
+                if (!row.isUserExpanded() && !row.isGroupExpanded()) {
+                    mMotoCompactExpandedRows.add(row);
+                    row.setUserExpanded(true, true /* allowChildExpansion */);
+                }
+            }
+        }
+        if (canAnimateMotoCompactPreview()) {
+            mMotoCompactAnimator.start(icon, mMotoCompactPreviewRows, true,
+                    this::finishMotoCompactCollapse);
+        }
+        updateMotoCompactPreview();
+    }
+
+    private boolean canAnimateMotoCompactPreview() {
+        return mAnimationsEnabled && ValueAnimator.areAnimatorsEnabled() && isAttachedToWindow()
+                && isMotoCompactDesignActive() && mMotoCompactIcon != null
+                && mMotoCompactIcon.isAttachedToWindow() && !mMotoCompactPreviewRows.isEmpty();
+    }
+
+    private void resetMotoCompactExpandedRows() {
+        for (ExpandableNotificationRow row : mMotoCompactPreviewRows) {
+            row.setMotoCompactPreview(false);
+        }
+        mMotoCompactPreviewRows.clear();
+        for (ExpandableNotificationRow row : mMotoCompactExpandedRows) {
+            row.setUserExpanded(false, true /* allowChildExpansion */);
+            row.resetUserExpansion();
+        }
+        mMotoCompactExpandedRows.clear();
+    }
+
+    public void clearMotoCompactSelection() {
+        if (mMotoCompactPackage == null) return;
+        if (canAnimateMotoCompactPreview()) {
+            if (!mMotoCompactAnimator.isCollapsing()) {
+                mMotoCompactAnimator.start(mMotoCompactIcon, mMotoCompactPreviewRows, false,
+                        this::finishMotoCompactCollapse);
+            }
+            return;
+        }
+        finishMotoCompactSelection();
+    }
+
+    private void finishMotoCompactCollapse() {
+        for (ExpandableNotificationRow row : mMotoCompactPreviewRows) {
+            if (row.getVisibility() != GONE) row.setVisibility(INVISIBLE);
+        }
+        finishMotoCompactSelection();
+    }
+
+    private void finishMotoCompactSelection() {
+        mMotoCompactAnimator.cancel();
+        mMotoCompactIcon = null;
+        if (mMotoCompactPackage == null) return;
+        mMotoCompactPackage = null;
+        mMotoCompactUserId = UserHandle.USER_NULL;
+        resetMotoCompactExpandedRows();
+        updateMotoCompactPreview();
+    }
+
+    /** Called by the shelf when the user turns the Moto compact design on or off. */
+    public void onMotoCompactDesignChanged() {
+        finishMotoCompactSelection();
+        updateMotoCompactPreview();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        finishMotoCompactSelection();
+        super.onDetachedFromWindow();
+    }
+
+    private void updateMotoCompactPreview() {
+        if (mMotoCompactPreviewListener != null) {
+            mMotoCompactPreviewListener.accept(isMotoCompactPreviewVisible());
+        }
+        requestAnimationOnViewResize(null);
+        updateContentHeight();
         requestChildrenUpdate();
     }
 
@@ -6666,6 +6892,9 @@ public class NotificationStackScrollLayout
      * the notification is pulsing.
      */
     public void setDozeAmount(float dozeAmount) {
+        if (dozeAmount > mAmbientState.getDozeAmount()) {
+            finishMotoCompactSelection();
+        }
         mAmbientState.setDozeAmount(dozeAmount);
         updateStackPosition();
         requestChildrenUpdate();
@@ -6868,6 +7097,9 @@ public class NotificationStackScrollLayout
      */
     public void setFractionToShade(float fraction) {
         mAmbientState.setFractionToShade(fraction);
+        if (fraction > 0f) {
+            clearMotoCompactSelection();
+        }
         updateContentHeight();  // Recompute stack height with different section gap.
         requestChildrenUpdate();
     }
@@ -7172,6 +7404,15 @@ public class NotificationStackScrollLayout
 
     @Override
     protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        final int saveCount = mMotoCompactAnimator.prepareCanvas(canvas, child);
+        try {
+            return drawChildWithStackClipping(canvas, child, drawingTime);
+        } finally {
+            if (saveCount >= 0) canvas.restoreToCount(saveCount);
+        }
+    }
+
+    private boolean drawChildWithStackClipping(Canvas canvas, View child, long drawingTime) {
         boolean shouldUseClipping =
                 mShouldUseRoundedRectClipping || mShouldUseNegativeRoundedRectClipping;
         if (mBlurEffect != null) {

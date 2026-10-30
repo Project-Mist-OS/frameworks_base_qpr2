@@ -22,13 +22,21 @@ import static com.android.systemui.Flags.physicalNotificationMovement;
 import static com.android.systemui.util.ColorUtilKt.hexColorString;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
+import android.database.ContentObserver;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.UserHandle;
+import android.provider.Settings;
+import android.service.notification.StatusBarNotification;
 import android.util.AttributeSet;
 import android.util.IndentingPrintWriter;
 import android.util.MathUtils;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
@@ -66,6 +74,9 @@ import com.android.systemui.statusbar.phone.NotificationIconContainer;
 import com.android.systemui.util.DumpUtilsKt;
 
 import java.io.PrintWriter;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.function.Consumer;
 
 /**
  * A notification shelf view that is placed inside the notification scroller. It manages the
@@ -75,6 +86,7 @@ public class NotificationShelf extends ActivatableNotificationView {
 
     private static final int TAG_CONTINUOUS_CLIPPING = R.id.continuous_clipping_tag;
     private static final String TAG = "NotificationShelf";
+    private static final int MOTO_COMPACT_MAX_ICONS = 7;
 
     // More extreme version of SLOW_OUT_LINEAR_IN which keeps the icon nearly invisible until after
     // the next icon has translated out of the way, to avoid overlapping.
@@ -110,6 +122,16 @@ public class NotificationShelf extends ActivatableNotificationView {
     private boolean mCanInteract;
     private NotificationStackScrollLayout mHostLayout;
     private NotificationRoundnessManager mRoundnessManager;
+    private ContentObserver mNotificationDesignObserver;
+    private boolean mAlignToCenter = false;
+    private boolean mMotoCompactNotificationsEnabled;
+    private boolean mMotoCompactDesign;
+    private int mMotoCompactIconSpacing;
+    private final HashSet<String> mMotoCompactApps = new HashSet<>();
+    private Consumer<StatusBarIconView> mMotoIconClickListener;
+    private final HashMap<String, CharSequence> mMotoAppLabels = new HashMap<>();
+    private float mMotoTouchX = Float.NaN;
+    private float mMotoTouchY = Float.NaN;
 
     public NotificationShelf(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -151,6 +173,8 @@ public class NotificationShelf extends ActivatableNotificationView {
         mStatusBarHeight = SystemBarUtils.getStatusBarHeight(mContext);
         mPaddingBetweenElements = res.getDimensionPixelSize(R.dimen.notification_divider_height);
         mMaxIconsOnLockscreen = res.getInteger(R.integer.max_notif_icons_on_lockscreen);
+        mMotoCompactIconSpacing = res.getDimensionPixelSize(
+                R.dimen.moto_compact_notification_icon_spacing);
 
         ViewGroup.LayoutParams layoutParams = getLayoutParams();
         final int newShelfHeight = res.getDimensionPixelOffset(R.dimen.notification_shelf_height);
@@ -173,12 +197,245 @@ public class NotificationShelf extends ActivatableNotificationView {
         if (!mShowNotificationShelf) {
             setVisibility(GONE);
         }
+        updateNotificationDesignSettings();
+        mShelfIcons.setIconSpacing(mMotoCompactDesign ? mMotoCompactIconSpacing : 0);
     }
 
     @Override
     protected void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        mMotoAppLabels.clear();
         updateResources();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        registerNotificationDesignObserver();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        destroy();
+        super.onDetachedFromWindow();
+    }
+
+    private void registerNotificationDesignObserver() {
+        if (!NotificationMinimalism.isEnabled() || mNotificationDesignObserver != null) {
+            return;
+        }
+        mNotificationDesignObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override
+            public void onChange(boolean selfChange) {
+                updateNotificationDesignSettings();
+                if (mAmbientState != null && mHostLayout != null) {
+                    updateAppearance();
+                }
+            }
+        };
+        mContext.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.NOTIFICATION_ICONS_CENTER_ALIGNED),
+                false, mNotificationDesignObserver, UserHandle.USER_ALL);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(Settings.Secure.LOCK_SCREEN_MOTO_COMPACT_NOTIFICATIONS),
+                false, mNotificationDesignObserver, UserHandle.USER_ALL);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.Secure.getUriFor(Settings.Secure.LOCK_SCREEN_NOTIFICATION_MINIMALISM),
+                false, mNotificationDesignObserver, UserHandle.USER_ALL);
+    }
+
+    public void destroy() {
+        if (mNotificationDesignObserver != null) {
+            mContext.getContentResolver().unregisterContentObserver(mNotificationDesignObserver);
+            mNotificationDesignObserver = null;
+        }
+    }
+
+    private void updateNotificationDesignSettings() {
+        mAlignToCenter = isCenterAlignmentEnabled();
+        applyAlignToCenterToChildren();
+        final boolean wasEnabled = mMotoCompactNotificationsEnabled;
+        mMotoCompactNotificationsEnabled = NotificationMinimalism.isEnabled()
+                && Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                        Settings.Secure.LOCK_SCREEN_NOTIFICATION_MINIMALISM, 1,
+                        UserHandle.USER_CURRENT) == 1
+                && Settings.Secure.getIntForUser(mContext.getContentResolver(),
+                        Settings.Secure.LOCK_SCREEN_MOTO_COMPACT_NOTIFICATIONS, 0,
+                        UserHandle.USER_CURRENT) == 1;
+        if (wasEnabled != mMotoCompactNotificationsEnabled && mHostLayout != null) {
+            mHostLayout.onMotoCompactDesignChanged();
+        }
+    }
+
+    /** Whether the user selected the Moto compact design, regardless of the current state. */
+    public boolean isMotoCompactDesignEnabled() {
+        return mMotoCompactNotificationsEnabled;
+    }
+
+    /** Reloads the per-user settings after the current user changed. */
+    public void onUserChanged() {
+        mMotoAppLabels.clear();
+        updateNotificationDesignSettings();
+    }
+
+    private void updateMotoCompactDesign() {
+        final boolean enabled = mHostLayout.isMotoCompactDesignActive();
+        if (mMotoCompactDesign != enabled) {
+            mMotoCompactDesign = enabled;
+            mShelfIcons.setIconSpacing(enabled ? mMotoCompactIconSpacing : 0);
+            mShelfIcons.setUseVisibleIconCount(enabled);
+            mBackgroundNormal.setMotoIconContainer(enabled ? mShelfIcons : null);
+            applyAlignToCenterToChildren();
+            if (!enabled) {
+                mHostLayout.clearMotoCompactSelection();
+                for (int i = 0; i < mShelfIcons.getChildCount(); i++) {
+                    View icon = mShelfIcons.getChildAt(i);
+                    icon.setOnClickListener(null);
+                    icon.setClickable(false);
+                    icon.setFocusable(false);
+                    icon.setSelected(false);
+                    if (icon instanceof StatusBarIconView statusIcon) {
+                        statusIcon.setIncreasedSize(false);
+                    }
+                }
+            }
+            updateOutline();
+        }
+    }
+
+    public void setMotoIconClickListener(Consumer<StatusBarIconView> listener) {
+        mMotoIconClickListener = listener;
+    }
+
+    /** Called when the icon of an app was tapped, to preview or collapse its notifications. */
+    public void onMotoIconClicked(StatusBarIconView icon) {
+        if (mMotoCompactDesign && mInteractive
+                && icon.getVisibleState() == StatusBarIconView.STATE_ICON) {
+            mHostLayout.toggleMotoCompactApp(icon);
+        }
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            mMotoTouchX = event.getX();
+            mMotoTouchY = event.getY();
+        }
+        return super.onTouchEvent(event);
+    }
+
+    /** Include the circular background in each icon's touch target. */
+    public StatusBarIconView getTouchedMotoIcon() {
+        final float x = mMotoTouchX;
+        final float y = mMotoTouchY;
+        mMotoTouchX = Float.NaN;
+        mMotoTouchY = Float.NaN;
+        return getMotoIconAtPosition(x, y);
+    }
+
+    /** @return the icon whose circle contains the position, relative to this shelf. */
+    public StatusBarIconView getMotoIconAtPosition(float x, float y) {
+        if (!mMotoCompactDesign) return null;
+        final float radius = getResources().getDimension(
+                R.dimen.moto_compact_notification_background_size) / 2f;
+        for (int i = 0; i < mShelfIcons.getChildCount(); i++) {
+            if (mShelfIcons.getChildAt(i) instanceof StatusBarIconView icon
+                    && icon.getVisibleState() != StatusBarIconView.STATE_HIDDEN) {
+                float dx = x - (mShelfIcons.getX() + icon.getX() + icon.getWidth() / 2f);
+                float dy = y - (mShelfIcons.getY() + icon.getY() + icon.getHeight() / 2f);
+                if (dx * dx + dy * dy <= radius * radius) return icon;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Shows one icon per app, for the first notification of each app, and hides all others.
+     *
+     * @return the number of icons in the shelf
+     */
+    private int updateMotoCompactIcons() {
+        mMotoCompactApps.clear();
+        boolean hasSelectedApp = false;
+        for (int i = 0; i < mShelfIcons.getChildCount(); i++) {
+            if (mShelfIcons.getChildAt(i) instanceof StatusBarIconView icon) {
+                NotificationIconContainer.IconState state = getIconState(icon);
+                if (state == null) continue;
+                state.hidden = true;
+                state.iconAppearAmount = 0f;
+                state.setAlpha(0f, "moto compact hidden app icon");
+                icon.setSelected(false);
+            }
+        }
+        for (int i = 0; i < getHostLayoutChildCount(); i++) {
+            if (!(getHostLayoutChildAt(i) instanceof ExpandableNotificationRow row)
+                    || row.getVisibility() == GONE) continue;
+            final StatusBarIconView icon = row.getShelfIcon();
+            if (icon == null || getIconState(icon) == null) continue;
+            final StatusBarNotification notification = icon.getNotification();
+            if (notification == null || !mMotoCompactApps.add(
+                    notification.getUserId() + ":" + notification.getPackageName())) continue;
+            NotificationIconContainer.IconState state = getIconState(icon);
+            state.hidden = false;
+            state.iconAppearAmount = 1f;
+            state.setAlpha(1f, "moto compact app icon");
+            state.setYTranslation(0f, "moto compact app icon");
+            state.setScaleX(1f);
+            state.setScaleY(1f);
+            icon.setIncreasedSize(true);
+            icon.setSelected(mHostLayout.isMotoCompactAppSelected(notification));
+            hasSelectedApp |= icon.isSelected();
+            // Expose the app name, not potentially redacted notification text, to accessibility.
+            final String packageName = notification.getPackageName();
+            CharSequence label = mMotoAppLabels.get(packageName);
+            if (label == null) {
+                try {
+                    PackageManager pm = mContext.getPackageManager();
+                    label = pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0));
+                } catch (PackageManager.NameNotFoundException e) {
+                    label = packageName;
+                }
+                mMotoAppLabels.put(packageName, label);
+            }
+            icon.setContentDescription(label);
+            if (!icon.hasOnClickListeners()) {
+                icon.setOnClickListener(view -> {
+                    if (mMotoIconClickListener != null) mMotoIconClickListener.accept(icon);
+                });
+            }
+        }
+        if (!hasSelectedApp) {
+            mHostLayout.clearMotoCompactSelection();
+        }
+        return mMotoCompactApps.size();
+    }
+
+    private boolean isCenterAlignmentEnabled() {
+        if (!NotificationMinimalism.isEnabled()) {
+            return false;
+        }
+        return Settings.System.getIntForUser(
+                mContext.getContentResolver(),
+                Settings.System.NOTIFICATION_ICONS_CENTER_ALIGNED,
+                0,
+                UserHandle.USER_CURRENT) == 1;
+    }
+
+    private void applyAlignToCenterToChildren() {
+        if (mShelfIcons instanceof NotificationShelfIconContainer) {
+            ((NotificationShelfIconContainer) mShelfIcons).setAlignToCenter(isShelfCentered());
+        }
+    }
+
+    private boolean isShelfCentered() {
+        return mAlignToCenter || mMotoCompactDesign;
+    }
+
+    public void setAlignToCenter(boolean alignToCenter) {
+        if (mAlignToCenter == alignToCenter) return;
+        mAlignToCenter = alignToCenter;
+        applyAlignToCenterToChildren();
+        invalidate();
     }
 
     @Override
@@ -247,7 +504,8 @@ public class NotificationShelf extends ActivatableNotificationView {
             }
             viewState.hideSensitive = false;
             viewState.setXTranslation(getTranslationX());
-            viewState.hasItemsInStableShelf = lastViewState.inShelf;
+            final boolean motoCompact = mHostLayout.isMotoCompactDesignActive();
+            viewState.hasItemsInStableShelf = lastViewState.inShelf || motoCompact;
             viewState.firstViewInShelf = algorithmState.firstViewInShelf;
             if (mNotGoneIndex != -1) {
                 viewState.notGoneIndex = Math.min(viewState.notGoneIndex, mNotGoneIndex);
@@ -255,8 +513,9 @@ public class NotificationShelf extends ActivatableNotificationView {
 
             viewState.hidden = !mAmbientState.isShadeExpanded()
                     || mAmbientState.isPulsing()
-                    || algorithmState.firstViewInShelf == null
-                    || (mAmbientState.isOnKeyguard() && mDisableNotificationShelfOnKeyguard);
+                    || (!motoCompact && algorithmState.firstViewInShelf == null)
+                    || (!motoCompact && mAmbientState.isOnKeyguard()
+                            && mDisableNotificationShelfOnKeyguard);
 
             final int indexOfFirstViewInShelf = algorithmState.visibleChildren.indexOf(
                     algorithmState.firstViewInShelf);
@@ -278,9 +537,10 @@ public class NotificationShelf extends ActivatableNotificationView {
             viewState.hasItemsInStableShelf = false;
         }
 
-        final float stackBottom = SceneContainerFlag.isEnabled()
+        final float stackBottom = (SceneContainerFlag.isEnabled()
                 ? ambientState.getStackScrollTop() + ambientState.getInterpolatedStackHeight()
-                : ambientState.getStackY() + ambientState.getInterpolatedStackHeight();
+                : ambientState.getStackY() + ambientState.getInterpolatedStackHeight())
+                - mHostLayout.getMotoCompactPreviewTopOffset();
 
         if (viewState.hidden) {
             // if the shelf is hidden, position it at the end of the stack (plus the clip
@@ -305,12 +565,30 @@ public class NotificationShelf extends ActivatableNotificationView {
      */
     @VisibleForTesting
     public void setActualWidth(float actualWidth) {
-        setBackgroundWidth((int) actualWidth);
         if (mShelfIcons != null) {
             mShelfIcons.setAlignToEnd(isAlignedToEnd());
             mShelfIcons.setActualLayoutWidth((int) actualWidth);
         }
+        if (isShelfCentered() && NotificationMinimalism.isEnabled()) {
+            setCenteredBackground(actualWidth);
+        } else {
+            setBackgroundWidth((int) actualWidth);
+            if (mBackgroundNormal != null) {
+                mBackgroundNormal.setTranslationX(0f);
+            }
+        }
         mActualWidth = actualWidth;
+    }
+
+    private void setCenteredBackground(float actualWidth) {
+        final int pillWidth = (int) actualWidth;
+        setBackgroundWidth(pillWidth);
+
+        if (mBackgroundNormal != null) {
+            final float screenWidth = getWidth();
+            final float leftOffset = (screenWidth - pillWidth) / 2f;
+            mBackgroundNormal.setTranslationX(leftOffset);
+        }
     }
 
     @Override
@@ -321,6 +599,7 @@ public class NotificationShelf extends ActivatableNotificationView {
         }
         if (mBackgroundNormal != null) {
             mBackgroundNormal.setAlignToEnd(isAlignedToEnd());
+            mBackgroundNormal.setAlignToCenter(isShelfCentered());
         }
     }
 
@@ -328,6 +607,13 @@ public class NotificationShelf extends ActivatableNotificationView {
     public void getBoundsOnScreen(Rect outRect, boolean clipToParent) {
         super.getBoundsOnScreen(outRect, clipToParent);
         final int actualWidth = getActualWidth();
+        if (NotificationMinimalism.isEnabled() && isShelfCentered()) {
+            final int fullWidth = outRect.width();
+            final int left = outRect.left + (fullWidth - actualWidth) / 2;
+            outRect.left = left;
+            outRect.right = left + actualWidth;
+            return;
+        }
         final boolean alignedToRight = NotificationMinimalism.isEnabled() ? isAlignedToRight() :
                 isLayoutRtl();
         if (alignedToRight) {
@@ -472,6 +758,7 @@ public class NotificationShelf extends ActivatableNotificationView {
         if (!mShowNotificationShelf) {
             return;
         }
+        updateMotoCompactDesign();
         mShelfIcons.resetViewStates();
         float shelfStart = getTranslationY();
         float numViewsInShelf = 0.0f;
@@ -562,6 +849,10 @@ public class NotificationShelf extends ActivatableNotificationView {
 
         clipTransientViews();
 
+        if (mMotoCompactDesign) {
+            numViewsInShelf = updateMotoCompactIcons();
+        }
+
         setClipTopAmount(clipTopAmount);
 
         boolean isHidden = getViewState().hidden
@@ -575,6 +866,20 @@ public class NotificationShelf extends ActivatableNotificationView {
         setVisibility(isHidden ? View.INVISIBLE : View.VISIBLE);
         mShelfIcons.calculateIconXTranslations();
         mShelfIcons.applyIconStates();
+        if (mMotoCompactDesign) {
+            for (int i = 0; i < mShelfIcons.getChildCount(); i++) {
+                if (mShelfIcons.getChildAt(i) instanceof StatusBarIconView icon) {
+                    final boolean visible =
+                            icon.getVisibleState() != StatusBarIconView.STATE_HIDDEN;
+                    icon.setClickable(visible && mInteractive);
+                    icon.setFocusable(visible && mInteractive);
+                    if (icon.isSelected()) {
+                        icon.setStaticDrawableColor(mContext.getColor(
+                                com.android.internal.R.color.materialColorOnPrimary));
+                    }
+                }
+            }
+        }
         for (int i = 0; i < getHostLayoutChildCount(); i++) {
             View child = getHostLayoutChildAt(i);
             if (!(child instanceof ExpandableNotificationRow row)
@@ -600,8 +905,14 @@ public class NotificationShelf extends ActivatableNotificationView {
                 : mAmbientState.isOnKeyguard();
 
         if (isOnLockscreen) {
-            float numViews = MathUtils.min(numViewsInShelf, mMaxIconsOnLockscreen + 1);
+            // Reserve the final slot for the overflow dot when more notifications are present.
+            final int maxSlots = mMotoCompactDesign
+                    ? MOTO_COMPACT_MAX_ICONS : mMaxIconsOnLockscreen + 1;
+            float numViews = MathUtils.min(numViewsInShelf, maxSlots);
             float shortestWidth = mShelfIcons.calculateWidthFor(numViews);
+            if (mMotoCompactDesign) {
+                shortestWidth = Math.min(shortestWidth, getWidth());
+            }
             float actualWidth = MathUtils.lerp(shortestWidth, getWidth(), fractionToShade);
             return (int) actualWidth;
         } else {
@@ -1014,7 +1325,7 @@ public class NotificationShelf extends ActivatableNotificationView {
 
     @Override
     protected boolean needsOutline() {
-        return !mHideBackground && super.needsOutline();
+        return !mHideBackground && !mMotoCompactDesign && super.needsOutline();
     }
 
 
@@ -1050,6 +1361,15 @@ public class NotificationShelf extends ActivatableNotificationView {
         setFocusable(mInteractive);
         setImportantForAccessibility(mInteractive ? View.IMPORTANT_FOR_ACCESSIBILITY_YES
                 : View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        if (mMotoCompactDesign) {
+            for (int i = 0; i < mShelfIcons.getChildCount(); i++) {
+                if (mShelfIcons.getChildAt(i) instanceof StatusBarIconView icon) {
+                    boolean visible = icon.getVisibleState() != StatusBarIconView.STATE_HIDDEN;
+                    icon.setClickable(visible && mInteractive);
+                    icon.setFocusable(visible && mInteractive);
+                }
+            }
+        }
     }
 
     @Override

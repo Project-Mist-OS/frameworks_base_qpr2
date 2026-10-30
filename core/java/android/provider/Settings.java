@@ -7239,6 +7239,13 @@ public final class Settings {
         public static final String STATUS_BAR_BRIGHTNESS_CONTROL_LOCKSCREEN = "status_bar_brightness_control_lockscreen";
 
         /**
+         * Whether the compact lock screen notification icons are centered instead of aligned to
+         * the start of the screen.
+         * @hide
+         */
+        public static final String NOTIFICATION_ICONS_CENTER_ALIGNED = "notification_icons_center_aligned";
+
+        /**
          * Whether to enable the ripple animation on fingerprint unlock
          * @hide
          */
@@ -12687,6 +12694,15 @@ public final class Settings {
          */
         public static final String LOCK_SCREEN_STACKED_NOTIFICATIONS =
                 "lock_screen_stacked_notifications";
+
+        /**
+         * Whether compact lock screen notifications use the Moto design: up to seven app icons in
+         * separate circles, where tapping an icon previews the notifications of that app. Only
+         * applies when {@link #LOCK_SCREEN_NOTIFICATION_MINIMALISM} is enabled.
+         * @hide
+         */
+        public static final String LOCK_SCREEN_MOTO_COMPACT_NOTIFICATIONS =
+                "lock_screen_moto_compact_notifications";
 
         /**
          * @hide

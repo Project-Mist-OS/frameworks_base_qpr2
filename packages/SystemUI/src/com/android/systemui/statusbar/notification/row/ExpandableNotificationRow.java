@@ -426,6 +426,7 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
      * True if we always show the collapsed layout on lockscreen because vertical space is low.
      */
     private boolean mSaveSpaceOnLockscreen;
+    private boolean mMotoCompactPreview;
 
     // indicates when this view was first attached to a window
     // this value will reset when the view is completely removed from the shade (ie: filtered out)
@@ -3466,7 +3467,15 @@ public class ExpandableNotificationRow extends ActivatableNotificationView
      * @return whether the view state is currently expanded.
      */
     public boolean isExpanded() {
-        return isExpanded(false /* allowOnKeyguard */);
+        return isExpanded(mMotoCompactPreview /* allowOnKeyguard */);
+    }
+
+    /** Allow the selected compact preview to expand while retaining lock screen redaction. */
+    public void setMotoCompactPreview(boolean preview) {
+        if (mMotoCompactPreview != preview) {
+            mMotoCompactPreview = preview;
+            notifyHeightChanged(false /* needsAnimation */, "setMotoCompactPreview");
+        }
     }
 
     public boolean isExpanded(boolean allowOnKeyguard) {
