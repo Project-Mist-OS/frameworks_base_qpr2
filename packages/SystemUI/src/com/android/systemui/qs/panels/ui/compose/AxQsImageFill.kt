@@ -18,7 +18,10 @@ package com.android.systemui.qs.panels.ui.compose
 
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
+import android.graphics.ComposeShader
+import android.graphics.LinearGradient
 import android.graphics.Matrix
+import android.graphics.PorterDuff
 import android.graphics.Shader
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material3.MaterialTheme
@@ -32,10 +35,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import com.android.systemui.qs.panels.shared.model.AxQsImageFill
 import kotlin.math.max
 
@@ -53,32 +55,8 @@ private class ImageFillBrush(
     private val bitmap: Bitmap,
     private val rotateQuarter: Boolean,
     private val dim: Float,
-) : Brush() {
-    private var shader: Shader? = null
-    private var shaderSize = Size.Unspecified
-    private val colorFilter =
-        if (dim > 0f) {
-            val keep = 1f - dim
-            ColorFilter.colorMatrix(ColorMatrix().apply { setToScale(keep, keep, keep, 1f) })
-        } else {
-            null
-        }
-
-    override val intrinsicSize: Size
-        get() = Size.Unspecified
-
-    override fun applyTo(size: Size, p: Paint, alpha: Float) {
-        if (shader == null || shaderSize != size) {
-            shader = if (size.isEmpty()) null else createShader(size)
-            shaderSize = size
-        }
-        p.color = Color.Black
-        p.shader = shader
-        p.alpha = alpha
-        p.colorFilter = colorFilter
-    }
-
-    private fun createShader(size: Size): Shader {
+) : ShaderBrush() {
+    override fun createShader(size: Size): Shader {
         val boxWidth = if (rotateQuarter) size.height else size.width
         val boxHeight = if (rotateQuarter) size.width else size.height
         val scale = max(boxWidth / bitmap.width, boxHeight / bitmap.height)
@@ -89,9 +67,20 @@ private class ImageFillBrush(
         if (rotateQuarter) matrix.postRotate(90f)
         matrix.postTranslate(size.width / 2f, size.height / 2f)
 
-        return BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also {
-            it.setLocalMatrix(matrix)
-        }
+        val image =
+            BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also {
+                it.setLocalMatrix(matrix)
+            }
+        if (dim <= 0f) return image
+
+        // A flat black layer over the image darkens it inside the shader itself, since
+        // ShaderBrush does not let us change the paint.
+        val black = Color.Black.copy(alpha = dim).toArgb()
+        return ComposeShader(
+            image,
+            LinearGradient(0f, 0f, 1f, 1f, black, black, Shader.TileMode.CLAMP),
+            PorterDuff.Mode.SRC_OVER,
+        )
     }
 
     override fun equals(other: Any?): Boolean =
