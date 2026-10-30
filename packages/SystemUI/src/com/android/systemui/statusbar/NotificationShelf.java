@@ -688,6 +688,10 @@ public class NotificationShelf extends ActivatableNotificationView {
      */
     @VisibleForTesting
     public float getShelfLeftBound() {
+        if (NotificationMinimalism.isEnabled() && isShelfCentered()) {
+            // The centered shelf is drawn in the middle, so touches must be accepted there too.
+            return (getWidth() - getActualWidth()) / 2f;
+        }
         if (isAlignedToRight()) {
             return getWidth() - getActualWidth();
         } else {
@@ -700,6 +704,9 @@ public class NotificationShelf extends ActivatableNotificationView {
      */
     @VisibleForTesting
     public float getShelfRightBound() {
+        if (NotificationMinimalism.isEnabled() && isShelfCentered()) {
+            return (getWidth() + getActualWidth()) / 2f;
+        }
         if (isAlignedToRight()) {
             return getWidth();
         } else {
