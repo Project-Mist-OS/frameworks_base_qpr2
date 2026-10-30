@@ -79,6 +79,8 @@ fun BuildNumber(
     @Suppress("UNUSED_PARAMETER") viewModel: BuildNumberViewModel? = null,
     modifier: Modifier = Modifier,
     textColor: Color = MaterialTheme.colorScheme.onSurface,
+    forceEnabled: Boolean = false,
+    compact: Boolean = false,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -88,8 +90,10 @@ fun BuildNumber(
     val duc = remember { DataUsageController(context) }
     val cr = context.contentResolver
 
-    var showDataUsage by remember {
-        mutableStateOf(
+    // forceEnabled lets a host (e.g. the custom QS header) own the toggle instead of the
+    // QS_SHOW_DATA_USAGE footer setting.
+    fun readShowDataUsage(): Boolean =
+        forceEnabled ||
             try {
                 Settings.System.getIntForUser(
                     cr,
@@ -100,24 +104,13 @@ fun BuildNumber(
             } catch (_: Throwable) {
                 false
             }
-        )
-    }
 
-    DisposableEffect(Unit) {
+    var showDataUsage by remember(forceEnabled) { mutableStateOf(readShowDataUsage()) }
+
+    DisposableEffect(forceEnabled) {
         val usageToggleObserver = object : ContentObserver(null) {
             override fun onChange(selfChange: Boolean) {
-                context.mainExecutor.execute {
-                    showDataUsage = try {
-                        Settings.System.getIntForUser(
-                            cr,
-                            Settings.System.QS_SHOW_DATA_USAGE,
-                            0,
-                            UserHandle.USER_CURRENT
-                        ) != 0
-                    } catch (_: Throwable) {
-                        false
-                    }
-                }
+                context.mainExecutor.execute { showDataUsage = readShowDataUsage() }
             }
         }
 
@@ -325,7 +318,7 @@ fun BuildNumber(
         )
         .focusable()
         .wrapContentWidth()
-        .minimumInteractiveComponentSize()
+        .then(if (compact) Modifier else Modifier.minimumInteractiveComponentSize())
         .pointerInput(Unit) {
             detectTapGestures(
                 onTap = {

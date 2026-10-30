@@ -88,6 +88,7 @@ import com.android.systemui.animation.Expandable as SystemUiExpandable
 import com.android.systemui.common.ui.compose.Icon as SystemUiIcon
 import com.android.systemui.common.ui.compose.PagerDots
 import com.android.systemui.compose.modifiers.sysuiResTag
+import com.android.systemui.development.ui.compose.BuildNumber
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.composefragment.ui.axQuickSettingsSceneMotion
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsButtonViewModel
@@ -121,6 +122,7 @@ internal fun <T> ContentScope.AxQQS(
     editButtonProgress: () -> Float,
     separateMode: Boolean,
     showWeather: Boolean = true,
+    showDataUsage: Boolean = false,
     modifier: Modifier = Modifier,
     controlContent: @Composable (AxQsGridItem<T>) -> Unit,
     tileContent: @Composable (AxQsGridItem<T>) -> Unit,
@@ -136,6 +138,7 @@ internal fun <T> ContentScope.AxQQS(
             shadeHeaderViewModel = shadeHeaderViewModel,
             showEdit = false,
             showWeather = showWeather,
+            showDataUsage = showDataUsage,
             isFullyVisible = isFullyVisible,
             editButtonProgress = editButtonProgress,
         )
@@ -202,6 +205,7 @@ internal fun <T> ContentScope.AxQS(
     circleCells: Boolean,
     showDate: Boolean = false,
     showWeather: Boolean = true,
+    showDataUsage: Boolean = false,
     modifier: Modifier = Modifier,
     controlContent: @Composable (AxQsGridItem<T>) -> Unit,
     tileContent: @Composable (AxQsGridItem<T>) -> Unit,
@@ -218,6 +222,7 @@ internal fun <T> ContentScope.AxQS(
             showEdit = true,
             showDate = showDate,
             showWeather = showWeather,
+            showDataUsage = showDataUsage,
             isFullyVisible = isFullyVisible,
             editButtonProgress = editButtonProgress,
         )
@@ -283,6 +288,7 @@ internal fun AxQsDateHeader(
     showEdit: Boolean,
     showDate: Boolean = false,
     showWeather: Boolean = true,
+    showDataUsage: Boolean = false,
     isFullyVisible: () -> Boolean,
     editButtonProgress: () -> Float,
     modifier: Modifier = Modifier,
@@ -296,8 +302,20 @@ internal fun AxQsDateHeader(
             if (showDate) {
                 AxQuickSettingsDate(viewModel = shadeHeaderViewModel)
             }
-            if (showWeather) {
-                AxQsWeather()
+            if (showDataUsage || showWeather) {
+                // Data usage on top (start), weather below it. With a single option the
+                // column simply holds that one item.
+                Column(
+                    modifier = Modifier.weight(1f, fill = false),
+                    horizontalAlignment = Alignment.Start,
+                ) {
+                    if (showDataUsage) {
+                        AxQsDataUsage()
+                    }
+                    if (showWeather) {
+                        AxQsWeather()
+                    }
+                }
             }
         }
         AxQsHeaderActions(
@@ -308,6 +326,16 @@ internal fun AxQsDateHeader(
             modifier = Modifier.offset(x = 6.dp),
         )
     }
+}
+
+@Composable
+fun AxQsDataUsage(modifier: Modifier = Modifier) {
+    BuildNumber(
+        modifier = modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        forceEnabled = true,
+        compact = true,
+    )
 }
 
 @Composable

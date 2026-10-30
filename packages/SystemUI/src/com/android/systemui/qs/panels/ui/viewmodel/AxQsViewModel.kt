@@ -219,6 +219,12 @@ constructor(
             initialValue = true,
             source = repository.showWeather,
         )
+    val showDataUsage by
+        hydrator.hydratedStateOf(
+            traceName = "showDataUsage",
+            initialValue = false,
+            source = repository.showDataUsage,
+        )
 
     val customStyle by
         hydrator.hydratedStateOf(
