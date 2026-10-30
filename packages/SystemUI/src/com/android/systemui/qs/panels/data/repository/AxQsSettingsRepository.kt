@@ -508,7 +508,8 @@ constructor(
         const val SHOW_DATA_USAGE = "ax_qs_show_data_usage"
         const val IMAGE_FILL_ENABLED = "ax_qs_image_fill_enabled"
         const val IMAGE_FILL_URI = "ax_qs_image_fill_uri"
-        const val IMAGE_FILL_MAX_SIZE_PX = 1024
+        // Larger than any tile or slider, so the on-screen image is never upscaled.
+        const val IMAGE_FILL_MAX_SIZE_PX = 2048
         const val IMAGE_FILL_SCRIM_ALPHA = 56
         const val TAG = "AxQsSettingsRepository"
         const val HEADER_TOP_MARGIN = "ax_qs_header_top_margin"
