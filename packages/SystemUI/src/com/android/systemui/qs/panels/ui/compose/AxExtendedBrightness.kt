@@ -283,9 +283,8 @@ private fun Toggles(viewModel: BrightnessSliderViewModel, verticalStyle: AxQsVer
         )
         ExtendedToggle(
             label = stringResource(R.string.quick_settings_ui_mode_night_label),
-            iconRes =
-                if (darkTheme) R.drawable.qs_light_dark_theme_icon_on
-                else R.drawable.qs_light_dark_theme_icon_off,
+            // painterResource can't load the animated-vector tile icons, use the static vector.
+            iconRes = R.drawable.vd_theme,
             active = darkTheme,
             verticalStyle = verticalStyle,
             onToggle = {
@@ -295,9 +294,7 @@ private fun Toggles(viewModel: BrightnessSliderViewModel, verticalStyle: AxQsVer
         )
         ExtendedToggle(
             label = stringResource(R.string.quick_settings_night_display_label),
-            iconRes =
-                if (nightLight) R.drawable.qs_nightlight_icon_on
-                else R.drawable.qs_nightlight_icon_off,
+            iconRes = R.drawable.vd_night_light,
             active = nightLight,
             verticalStyle = verticalStyle,
             onToggle = {
