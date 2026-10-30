@@ -241,7 +241,11 @@ constructor(
         set(value) {
             if (field == value) return
             field = value
-            refreshMediaPosition(reason = "notification preview visibility changed")
+            // The scene container hides the media element from this state instead.
+            mediaCarouselInteractor.setNotificationPreviewVisible(value)
+            if (!SceneContainerFlag.isEnabled) {
+                refreshMediaPosition(reason = "notification preview visibility changed")
+            }
         }
 
     /** single pane media container placed at the top of the notifications list */

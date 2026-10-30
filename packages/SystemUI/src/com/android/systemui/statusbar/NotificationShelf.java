@@ -36,6 +36,7 @@ import android.service.notification.StatusBarNotification;
 import android.util.AttributeSet;
 import android.util.IndentingPrintWriter;
 import android.util.MathUtils;
+import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -311,6 +312,7 @@ public class NotificationShelf extends ActivatableNotificationView {
     public void onMotoIconClicked(StatusBarIconView icon) {
         if (mMotoCompactDesign && mInteractive
                 && icon.getVisibleState() == StatusBarIconView.STATE_ICON) {
+            icon.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK);
             mHostLayout.toggleMotoCompactApp(icon);
         }
     }
@@ -759,6 +761,7 @@ public class NotificationShelf extends ActivatableNotificationView {
             return;
         }
         updateMotoCompactDesign();
+        mBackgroundNormal.setMotoBlurAllowed(!mAmbientState.isDozing());
         mShelfIcons.resetViewStates();
         float shelfStart = getTranslationY();
         float numViewsInShelf = 0.0f;

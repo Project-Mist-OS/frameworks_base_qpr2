@@ -59,7 +59,9 @@ constructor(
                 rememberViewModel("MediaCarouselElement") { mediaViewModelFactory.create() }
 
             AnimatedVisibility(
-                viewModel.isMediaVisible && !viewModel.isDozing,
+                viewModel.isMediaVisible &&
+                    !viewModel.isDozing &&
+                    !viewModel.isNotificationPreviewVisible,
                 enter = expandVertically(expandFrom = Alignment.Top),
                 exit = fadeOut(),
             ) {

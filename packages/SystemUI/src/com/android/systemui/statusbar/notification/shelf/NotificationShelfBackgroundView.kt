@@ -18,18 +18,25 @@
 package com.android.systemui.statusbar.notification.shelf
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.ViewTreeObserver
 import androidx.annotation.VisibleForTesting
+import com.android.axion.blur.AxBlurBackgroundRenderer
+import com.android.axion.blur.AxBlurColors
+import com.android.axion.blur.model.AxBackdropBlurSettingsSpec
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.StatusBarIconView
 import com.android.systemui.statusbar.notification.row.NotificationBackgroundView
 import com.android.systemui.statusbar.notification.shared.NotificationMinimalism
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /** The background view for the NotificationShelf. */
 class NotificationShelfBackgroundView
@@ -43,17 +50,36 @@ constructor(context: Context, attrs: AttributeSet? = null) :
     /** Whether the notification shelf is in center-alignment mode. */
     var alignToCenter = false
 
-    /** When set, draw the shelf background only around its individual visible icons. */
+    /**
+     * When set, draw the shelf background only around its individual visible icons, as one circle
+     * per icon: blurred when the platform supports it, a flat tinted circle otherwise.
+     */
     var motoIconContainer: NotificationShelfIconContainer? = null
         set(value) {
             if (field === value) return
             field = value
             motoIconBounds.clear()
             motoBackgroundPath.rewind()
+            blurRenderer.setEnabled(value != null && motoBlurAllowed)
+            if (value == null) releaseMotoBlur()
+            invalidate()
+        }
+
+    /**
+     * Whether the circles may be blurred. Turned off while dozing, where a blur over the black
+     * always-on display only costs power.
+     */
+    var motoBlurAllowed = true
+        set(value) {
+            if (field == value) return
+            field = value
+            blurRenderer.setEnabled(motoIconContainer != null && value)
+            if (!value) releaseMotoBlur()
             invalidate()
         }
 
     private val motoIconBounds = ArrayList<RectF>()
+    private val motoIconAlphas = IntArray(MOTO_MAX_ICONS)
     private val motoBackgroundPath = Path()
     private val motoSelectedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var motoSelectedIndex = -1
@@ -62,14 +88,40 @@ constructor(context: Context, attrs: AttributeSet? = null) :
         true
     }
 
+    // One blur surface per circle, so each circle blurs and fades independently.
+    private val blurRenderer =
+        AxBlurBackgroundRenderer(this, AxBackdropBlurSettingsSpec.system(), /* enabled= */ false)
+    private val motoBlurKeys = Array(MOTO_MAX_ICONS) { Any() }
+    private val motoBlurBounds = Rect()
+    private var motoBlurredCount = 0
+    private var blurOverlayColor = AxBlurColors.surfaceBrightTint(context)
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         viewTreeObserver.addOnPreDrawListener(motoPreDrawListener)
+        blurRenderer.onAttachedToWindow()
     }
 
     override fun onDetachedFromWindow() {
         viewTreeObserver.removeOnPreDrawListener(motoPreDrawListener)
+        blurRenderer.onDetachedFromWindow()
+        motoBlurredCount = 0
         super.onDetachedFromWindow()
+    }
+
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        blurRenderer.onVisibilityAggregated(isVisible)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration?) {
+        super.onConfigurationChanged(newConfig)
+        blurOverlayColor = AxBlurColors.surfaceBrightTint(context)
+        invalidate()
+    }
+
+    override fun verifyDrawable(who: Drawable): Boolean {
+        return super.verifyDrawable(who) || blurRenderer.verifyDrawable(who)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -79,16 +131,63 @@ constructor(context: Context, attrs: AttributeSet? = null) :
         }
 
         updateMotoIconBounds()
+        val drewBlur = drawMotoBlur(canvas)
         val saveCount = canvas.save()
         canvas.clipPath(motoBackgroundPath)
-        // Keep the shelf's tint, ripple, clipping and transparency inside each circle.
-        super.onDraw(canvas)
+        if (!drewBlur) {
+            // Keep the shelf's tint, ripple, clipping and transparency inside each circle.
+            super.onDraw(canvas)
+        }
         if (motoSelectedIndex >= 0) {
             motoSelectedPaint.color =
                 context.getColor(com.android.internal.R.color.materialColorPrimary)
             canvas.drawOval(motoIconBounds[motoSelectedIndex], motoSelectedPaint)
         }
         canvas.restoreToCount(saveCount)
+    }
+
+    /**
+     * Draws a blurred surface behind every circle.
+     *
+     * @return whether all circles were blurred, or false if the flat background must be drawn
+     */
+    private fun drawMotoBlur(canvas: Canvas): Boolean {
+        if (!blurRenderer.isCrossWindowBlurActive()) {
+            releaseMotoBlur()
+            return false
+        }
+        val count = motoIconBounds.size
+        var drewAll = count > 0
+        for (i in 0 until count) {
+            val bounds = motoIconBounds[i]
+            bounds.round(motoBlurBounds)
+            val drew =
+                blurRenderer.draw(
+                    canvas,
+                    motoBlurKeys[i],
+                    motoBlurBounds.left,
+                    motoBlurBounds.top,
+                    motoBlurBounds.right,
+                    motoBlurBounds.bottom,
+                    bounds.width() / 2f,
+                    blurOverlayColor,
+                    motoIconAlphas[i],
+                )
+            drewAll = drewAll && drew
+        }
+        // Drawing with no alpha releases the blur surface of a circle that went away.
+        for (i in count until motoBlurredCount) {
+            blurRenderer.draw(canvas, motoBlurKeys[i], 0, 0, 0, 0, 0f, blurOverlayColor, 0)
+        }
+        motoBlurredCount = count
+        return drewAll
+    }
+
+    private fun releaseMotoBlur() {
+        if (motoBlurredCount > 0) {
+            blurRenderer.clear()
+            motoBlurredCount = 0
+        }
     }
 
     private fun updateMotoIconBounds() {
@@ -120,6 +219,11 @@ constructor(context: Context, attrs: AttributeSet? = null) :
             val top = centerY - radius
             val right = centerX + radius
             val bottom = centerY + radius
+            val alpha = (icon.alpha * 255f).roundToInt().coerceIn(0, 255)
+            if (motoIconAlphas[count] != alpha) {
+                motoIconAlphas[count] = alpha
+                changed = true
+            }
             if (count == motoIconBounds.size) {
                 motoIconBounds.add(RectF(left, top, right, bottom))
                 changed = true

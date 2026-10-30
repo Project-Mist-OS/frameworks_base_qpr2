@@ -1047,11 +1047,9 @@ public class NotificationStackScrollLayoutController implements Dumpable {
             mView.requestChildrenUpdate();
             return kotlin.Unit.INSTANCE;
         });
-        if (!SceneContainerFlag.isEnabled()) {
-            // Hide the keyguard media player while the Moto compact design previews an app.
-            mView.setMotoCompactPreviewListener(
-                    mKeyguardMediaController::setNotificationPreviewVisible);
-        }
+        // Hide the keyguard media player while the Moto compact design previews an app.
+        mView.setMotoCompactPreviewListener(
+                mKeyguardMediaController::setNotificationPreviewVisible);
 
         if (screenshareNotificationHiding()) {
             mSensitiveNotificationProtectionController

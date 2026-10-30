@@ -47,8 +47,10 @@ import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -95,6 +97,19 @@ constructor(
 
     val allowMediaOnLockscreen: StateFlow<Boolean> =
         mediaPipelineRepository.allowMediaPlayerOnLockscreen
+
+    private val _isNotificationPreviewVisible = MutableStateFlow(false)
+
+    /**
+     * Whether the lock screen previews the notifications of an app (the Moto compact design), which
+     * needs the space the media player would take.
+     */
+    val isNotificationPreviewVisible: StateFlow<Boolean> =
+        _isNotificationPreviewVisible.asStateFlow()
+
+    fun setNotificationPreviewVisible(visible: Boolean) {
+        _isNotificationPreviewVisible.value = visible
+    }
 
     internal val isOnLockscreen: Flow<Boolean> =
         combine(

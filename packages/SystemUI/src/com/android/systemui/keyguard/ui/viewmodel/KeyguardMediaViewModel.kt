@@ -55,6 +55,14 @@ constructor(
     /** Whether the media notification can be visible on keyguard. */
     val isMediaVisible: Boolean by isMediaVisibleFlow.hydratedStateOf(initialValue = false)
 
+    /**
+     * Whether the lock screen previews the notifications of an app, in which case the media is
+     * hidden to make room. This is separate from [isMediaVisible], which also decides the size of
+     * the clock, so the clock doesn't change while a preview is shown.
+     */
+    val isNotificationPreviewVisible: Boolean by
+        mediaCarouselInteractor.isNotificationPreviewVisible.hydratedStateOf()
+
     val shadeMode: ShadeMode by shadeModeInteractor.shadeMode.hydratedStateOf()
 
     val isDozing: Boolean by keyguardInteractor.isDozing.hydratedStateOf()
