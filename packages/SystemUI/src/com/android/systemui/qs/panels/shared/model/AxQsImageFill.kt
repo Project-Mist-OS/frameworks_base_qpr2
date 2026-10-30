@@ -23,4 +23,4 @@ import androidx.compose.runtime.Immutable
  * A user picked image that replaces the primary color on active tiles and on the filled part of
  * the sliders. The bitmap is already downsampled and darkened by the repository.
  */
-@Immutable class AxQsImageFill(val bitmap: Bitmap)
+@Immutable class AxQsImageFill(val bitmap: Bitmap, val isLight: Boolean)

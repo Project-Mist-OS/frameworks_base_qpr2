@@ -21,7 +21,9 @@ import android.graphics.BitmapShader
 import android.graphics.Matrix
 import android.graphics.Shader
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -29,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
 import com.android.systemui.qs.panels.shared.model.AxQsImageFill
 import kotlin.math.max
@@ -67,6 +70,18 @@ private class ImageFillBrush(
         other is ImageFillBrush && other.bitmap === bitmap && other.rotateQuarter == rotateQuarter
 
     override fun hashCode(): Int = 31 * System.identityHashCode(bitmap) + rotateQuarter.hashCode()
+}
+
+/**
+ * Color for text and icons drawn on top of an active tile or slider. The theme's onPrimary is dark
+ * in dark mode, which disappears on a dark image, so with an image set the color follows the image
+ * (white, or black for a bright one) in both themes.
+ */
+@Composable
+@ReadOnlyComposable
+internal fun axQsActiveContentColor(): Color {
+    val fill = LocalAxQsImageFill.current ?: return MaterialTheme.colorScheme.onPrimary
+    return if (fill.isLight) Color.Black else Color.White
 }
 
 @Composable

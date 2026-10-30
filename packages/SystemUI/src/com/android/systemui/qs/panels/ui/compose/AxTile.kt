@@ -418,14 +418,16 @@ object AxTileColorsDefaults {
 
     @Composable
     @ReadOnlyComposable
-    fun activeTileColors(): TileColors =
-        TileColors(
+    fun activeTileColors(): TileColors {
+        val content = axQsActiveContentColor()
+        return TileColors(
             background = MaterialTheme.colorScheme.primary,
             iconBackground = Color.Transparent,
-            label = MaterialTheme.colorScheme.onPrimary,
-            secondaryLabel = MaterialTheme.colorScheme.onPrimary,
-            icon = MaterialTheme.colorScheme.onPrimary,
+            label = content,
+            secondaryLabel = content,
+            icon = content,
         )
+    }
 
     @Composable
     @ReadOnlyComposable

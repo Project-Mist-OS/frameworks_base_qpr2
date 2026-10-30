@@ -127,8 +127,7 @@ private fun AxQsButtonControl(
     val foreground by
         animateColorAsState(
             targetValue =
-                if (active) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurface,
+                if (active) axQsActiveContentColor() else MaterialTheme.colorScheme.onSurface,
             label = "AxQsButtonForeground",
         )
     Box(

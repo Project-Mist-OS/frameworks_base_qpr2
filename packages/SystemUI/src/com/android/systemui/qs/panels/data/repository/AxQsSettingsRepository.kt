@@ -17,6 +17,7 @@
 package com.android.systemui.qs.panels.data.repository
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ImageDecoder
@@ -440,12 +441,25 @@ constructor(
                 }
             // Keep icons and labels readable on bright images.
             Canvas(bitmap).drawColor(Color.argb(IMAGE_FILL_SCRIM_ALPHA, 0, 0, 0))
-            AxQsImageFill(bitmap)
+            AxQsImageFill(bitmap, isLight = averageLuma(bitmap) > IMAGE_FILL_LIGHT_LUMA)
         } catch (e: Exception) {
             // Missing or unreadable image: fall back to the primary color.
             Log.w(TAG, "Unable to load QS image fill from $uri", e)
             null
         }
+    }
+
+    /** Average brightness (0..1) of a small copy of [bitmap], used to pick a readable text color. */
+    private fun averageLuma(bitmap: Bitmap): Float {
+        val small = Bitmap.createScaledBitmap(bitmap, LUMA_SAMPLE_SIZE, LUMA_SAMPLE_SIZE, true)
+        val pixels = IntArray(LUMA_SAMPLE_SIZE * LUMA_SAMPLE_SIZE)
+        small.getPixels(pixels, 0, LUMA_SAMPLE_SIZE, 0, 0, LUMA_SAMPLE_SIZE, LUMA_SAMPLE_SIZE)
+        if (small !== bitmap) small.recycle()
+        var sum = 0f
+        for (p in pixels) {
+            sum += 0.2126f * Color.red(p) + 0.7152f * Color.green(p) + 0.0722f * Color.blue(p)
+        }
+        return sum / pixels.size / 255f
     }
 
     private fun Boolean.toSetting(): Int = if (this) 1 else 0
@@ -518,6 +532,9 @@ constructor(
         // Larger than any tile or slider, so the on-screen image is never upscaled.
         const val IMAGE_FILL_MAX_SIZE_PX = 2048
         const val IMAGE_FILL_SCRIM_ALPHA = 56
+        // Above this average brightness the image gets dark text instead of white.
+        const val IMAGE_FILL_LIGHT_LUMA = 0.62f
+        const val LUMA_SAMPLE_SIZE = 32
         const val TAG = "AxQsSettingsRepository"
         const val HEADER_TOP_MARGIN = "ax_qs_header_top_margin"
         const val MAX_HEADER_TOP_MARGIN_DP = 40

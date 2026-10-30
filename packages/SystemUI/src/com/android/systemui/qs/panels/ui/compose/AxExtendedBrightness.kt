@@ -337,8 +337,7 @@ private fun ExtendedToggle(
     val foreground by
         animateColorAsState(
             targetValue =
-                if (active) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurface,
+                if (active) axQsActiveContentColor() else MaterialTheme.colorScheme.onSurface,
             label = "AxExtendedToggleForeground",
         )
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(ToggleWidth)) {

@@ -88,7 +88,7 @@ object AxTileDefaults {
     @Composable
     fun dividerColor(state: Int): Color {
         return when (state) {
-            STATE_ACTIVE -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)
+            STATE_ACTIVE -> axQsActiveContentColor().copy(alpha = 0.2f)
             STATE_INACTIVE -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
             else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
         }
