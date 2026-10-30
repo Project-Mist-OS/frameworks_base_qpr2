@@ -24,6 +24,7 @@ import android.graphics.drawable.ColorDrawable
 import android.hardware.display.ColorDisplayManager
 import android.os.Handler
 import android.os.Looper
+import android.os.UserHandle
 import android.provider.Settings
 import android.view.CrossWindowBlurListeners
 import android.view.WindowManager
@@ -55,6 +56,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -79,6 +81,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
+import com.android.systemui.keyguard.ui.transitions.BlurConfig
 import com.android.systemui.qs.panels.shared.model.AxQsVerticalSliderStyle
 import com.android.systemui.res.R
 
@@ -93,13 +96,49 @@ private const val SCRIM_ALPHA_DARK = 0.40f
 private const val SCRIM_ALPHA_LIGHT = 0.35f
 private const val SCRIM_ALPHA_NO_BLUR = 0.92f
 private const val TOGGLE_INACTIVE_ALPHA = 0.22f
-private const val WINDOW_BLUR_RADIUS = 200
 
 @Composable
 private fun axPopupString(resName: String, fallback: String): String {
     val context = LocalContext.current
     val id = remember(resName) { context.resources.getIdentifier(resName, "string", context.packageName) }
     return if (id != 0) stringResource(id) else fallback
+}
+
+/**
+ * The window blur radius in px, driven by the same "QS Blur Radius" setting as the rest of the
+ * system blur (see [BlurConfig]), so Mistify's blur slider also controls this panel.
+ */
+@Composable
+private fun rememberQsBlurRadiusPx(): Int {
+    val context = LocalContext.current
+    fun read(): Int {
+        val percent =
+            Settings.Secure.getFloatForUser(
+                context.contentResolver,
+                BlurConfig.KEY_BLUR_RADIUS_PCT,
+                100f,
+                UserHandle.USER_CURRENT,
+            )
+        if (!percent.isFinite()) return BlurConfig.MAX_BLUR_RADIUS_PX.toInt()
+        return (BlurConfig.MAX_BLUR_RADIUS_PX * percent.coerceIn(0f, 100f) / 100f).toInt()
+    }
+    var radius by remember { mutableIntStateOf(read()) }
+    DisposableEffect(context) {
+        val observer =
+            object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) {
+                    radius = read()
+                }
+            }
+        context.contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor(BlurConfig.KEY_BLUR_RADIUS_PCT),
+            false,
+            observer,
+            UserHandle.USER_ALL,
+        )
+        onDispose { context.contentResolver.unregisterContentObserver(observer) }
+    }
+    return radius
 }
 
 /**
@@ -117,13 +156,14 @@ internal fun AxExtendedBrightnessPopup(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        val blurRadiusPx = rememberQsBlurRadiusPx()
         val dialogWindowProvider = LocalView.current.parent as? DialogWindowProvider
         SideEffect {
             dialogWindowProvider?.window?.let { window ->
                 window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
                 window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
                 val params = window.attributes
-                params.blurBehindRadius = WINDOW_BLUR_RADIUS
+                params.blurBehindRadius = blurRadiusPx
                 window.attributes = params
             }
         }
