@@ -16,6 +16,12 @@
 
 package com.android.systemui.qs.panels.data.repository
 
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.ImageDecoder
+import android.net.Uri
+import android.util.Log
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
@@ -24,6 +30,7 @@ import com.android.systemui.qs.panels.shared.model.AxQsControl
 import com.android.systemui.qs.panels.shared.model.AxQsGridLayout
 import com.android.systemui.qs.panels.shared.model.AxQsGridPosition
 import com.android.systemui.qs.panels.shared.model.AxQsGridSection
+import com.android.systemui.qs.panels.shared.model.AxQsImageFill
 import com.android.systemui.qs.panels.shared.model.AxQsLayout
 import com.android.systemui.qs.panels.shared.model.AxQsPanelMode
 import com.android.systemui.qs.panels.shared.model.AxQsSpan
@@ -43,14 +50,18 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 @SysUISingleton
 class AxQsSettingsRepository
 @Inject
 constructor(
+    @Application private val context: Context,
     private val secureSettings: SecureSettings,
     private val userRepository: UserRepository,
     @Application private val applicationScope: CoroutineScope,
@@ -97,6 +108,18 @@ constructor(
     val quickPanelOnLeft: StateFlow<Boolean> = boolSetting(QUICK_PANEL_ON_LEFT, false)
     val showWeather: StateFlow<Boolean> = boolSetting(SHOW_WEATHER, true)
     val showDataUsage: StateFlow<Boolean> = boolSetting(SHOW_DATA_USAGE, false)
+
+    // The picked image lives in MediaStore and its uri in secure settings, so both survive a
+    // reboot or a SystemUI restart. The decoded bitmap is cached here for the process lifetime.
+    val imageFillEnabled: StateFlow<Boolean> = boolSetting(IMAGE_FILL_ENABLED, false)
+    val imageFill: StateFlow<AxQsImageFill?> =
+        combine(imageFillEnabled, stringSetting(IMAGE_FILL_URI)) { enabled, uri ->
+                uri?.takeIf { enabled && it.isNotBlank() }
+            }
+            .distinctUntilChanged()
+            .mapLatest { uri -> uri?.let(::loadImageFill) }
+            .flowOn(backgroundDispatcher)
+            .stateIn(applicationScope, SharingStarted.Eagerly, null)
 
     val headerTopMargin: StateFlow<Int> =
         intSetting(HEADER_TOP_MARGIN, 0)
@@ -392,6 +415,32 @@ constructor(
         }
     }
 
+    private fun loadImageFill(uri: String): AxQsImageFill? {
+        return try {
+            val source = ImageDecoder.createSource(context.contentResolver, Uri.parse(uri))
+            val bitmap =
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    decoder.isMutableRequired = true
+                    val longest = max(info.size.width, info.size.height)
+                    if (longest > IMAGE_FILL_MAX_SIZE_PX) {
+                        val ratio = IMAGE_FILL_MAX_SIZE_PX.toFloat() / longest
+                        decoder.setTargetSize(
+                            (info.size.width * ratio).roundToInt().coerceAtLeast(1),
+                            (info.size.height * ratio).roundToInt().coerceAtLeast(1),
+                        )
+                    }
+                }
+            // Keep icons and labels readable on bright images.
+            Canvas(bitmap).drawColor(Color.argb(IMAGE_FILL_SCRIM_ALPHA, 0, 0, 0))
+            AxQsImageFill(bitmap)
+        } catch (e: Exception) {
+            // Missing or unreadable image: fall back to the primary color.
+            Log.w(TAG, "Unable to load QS image fill from $uri", e)
+            null
+        }
+    }
+
     private fun Boolean.toSetting(): Int = if (this) 1 else 0
 
     private fun spansKey(layout: AxQsLayout): String = SPANS_KEYS.getValue(layout)
@@ -457,6 +506,11 @@ constructor(
         const val SPLIT_SHADE_TILE_LABELS = "ax_qs_split_shade_show_tile_labels"
         const val SHOW_WEATHER = "ax_qs_show_weather"
         const val SHOW_DATA_USAGE = "ax_qs_show_data_usage"
+        const val IMAGE_FILL_ENABLED = "ax_qs_image_fill_enabled"
+        const val IMAGE_FILL_URI = "ax_qs_image_fill_uri"
+        const val IMAGE_FILL_MAX_SIZE_PX = 1024
+        const val IMAGE_FILL_SCRIM_ALPHA = 56
+        const val TAG = "AxQsSettingsRepository"
         const val HEADER_TOP_MARGIN = "ax_qs_header_top_margin"
         const val MAX_HEADER_TOP_MARGIN_DP = 40
 

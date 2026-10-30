@@ -348,6 +348,7 @@ private fun ExtendedToggle(
                 Modifier.size(ToggleSize)
                     .clip(RoundedCornerShape(corner))
                     .background(background)
+                    .axQsImageFill(active)
                     .toggleable(
                         value = active,
                         role = Role.Switch,

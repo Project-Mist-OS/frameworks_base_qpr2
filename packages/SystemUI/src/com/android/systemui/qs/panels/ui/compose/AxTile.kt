@@ -248,7 +248,9 @@ fun ContentScope.AxTile(
                 iconOnly = compact,
                 isDualTarget = isDualTarget,
                 fillHeight = fillHeight,
-                modifier = contentRevealModifier,
+                // Only active tiles get the optional image; inactive ones keep the default color.
+                modifier =
+                    contentRevealModifier.axQsImageFill(active = uiState.visualState == STATE_ACTIVE),
             ) {
                 val iconProvider: Context.() -> Icon = { getAxTileIcon(icon = icon) }
                 AnimatedContent(

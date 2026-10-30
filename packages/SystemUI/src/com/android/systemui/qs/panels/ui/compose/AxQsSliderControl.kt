@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredWidth
@@ -62,8 +63,12 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -256,6 +261,11 @@ private fun AxQsSlider(
     modifier: Modifier = Modifier,
 ) {
     val inactiveTrackColor = AxTileDefaults.backgroundColor()
+    // Optional image shown instead of the primary color on the filled part. `vertical` means the
+    // slider is rotated, so the brush counter-rotates to keep the image upright.
+    val imageBrush =
+        if (enabled) rememberAxQsImageBrush(LocalAxQsImageFill.current, rotateQuarter = vertical)
+        else null
     val sliderScale = if (vertical) sliderHeight / AxSliderTrackHeight else 1f
     val iconSize = if (vertical) AxSliderIconSize * sliderScale else HorizontalSliderIconSize
     if (vertical && verticalStyle == AxQsVerticalSliderStyle.PLATFORM) {
@@ -302,6 +312,7 @@ private fun AxQsSlider(
                 draggingCornersRadius =
                     PlatformSliderDefaults.DefaultPlatformSliderDraggingCornerRadius * sliderScale,
                 icon = { icon(Modifier.size(iconSize).rotate(90f)) },
+                indicatorBrush = imageBrush,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -310,7 +321,9 @@ private fun AxQsSlider(
     val colors =
         SliderDefaults.colors(
             thumbColor = MaterialTheme.colorScheme.primary,
-            activeTrackColor = MaterialTheme.colorScheme.primary,
+            // With an image the filled part is drawn by AxQsImageActiveTrack instead.
+            activeTrackColor =
+                if (imageBrush != null) Color.Transparent else MaterialTheme.colorScheme.primary,
             activeTickColor = MaterialTheme.colorScheme.onPrimary,
             inactiveTrackColor = inactiveTrackColor,
             inactiveTickColor = MaterialTheme.colorScheme.onSurface,
@@ -351,43 +364,88 @@ private fun AxQsSlider(
             )
         },
         track = { sliderState ->
-            SliderTrack(
-                sliderState = sliderState,
-                isEnabled = enabled,
-                colors = colors,
-                trackCornerSize = trackCornerSize,
-                trackInsideCornerSize = AxSliderTrackInsideCornerRadius,
-                thumbTrackGapSize = AxSliderThumbTrackGap,
-                trackSize = sliderHeight,
-                modifier = Modifier.background(trackBackgroundColor, trackShape),
-                activeTrackEndIcon = { iconsState ->
-                    AxQsSliderIcon(
-                        visible =
-                            if (vertical) {
-                                iconsState.isActiveTrackEndIconVisible
-                            } else {
-                                !iconsState.isInactiveTrackEndIconVisible
-                            },
-                        vertical = vertical,
-                        size = iconSize,
-                        icon = icon,
+            Box(modifier = Modifier.background(trackBackgroundColor, trackShape)) {
+                if (imageBrush != null) {
+                    AxQsImageActiveTrack(
+                        sliderState = sliderState,
+                        brush = imageBrush,
+                        trackCornerSize = trackCornerSize,
+                        trackSize = sliderHeight,
                     )
-                },
-                inactiveTrackEndIcon = { iconsState ->
-                    AxQsSliderIcon(
-                        visible =
-                            if (vertical) {
-                                !iconsState.isActiveTrackEndIconVisible
-                            } else {
-                                iconsState.isInactiveTrackEndIconVisible
-                            },
-                        vertical = vertical,
-                        size = iconSize,
-                        icon = icon,
-                    )
-                },
-            )
+                }
+                SliderTrack(
+                    sliderState = sliderState,
+                    isEnabled = enabled,
+                    colors = colors,
+                    trackCornerSize = trackCornerSize,
+                    trackInsideCornerSize = AxSliderTrackInsideCornerRadius,
+                    thumbTrackGapSize = AxSliderThumbTrackGap,
+                    trackSize = sliderHeight,
+                    activeTrackEndIcon = { iconsState ->
+                        AxQsSliderIcon(
+                            visible =
+                                if (vertical) {
+                                    iconsState.isActiveTrackEndIconVisible
+                                } else {
+                                    !iconsState.isInactiveTrackEndIconVisible
+                                },
+                            vertical = vertical,
+                            size = iconSize,
+                            icon = icon,
+                        )
+                    },
+                    inactiveTrackEndIcon = { iconsState ->
+                        AxQsSliderIcon(
+                            visible =
+                                if (vertical) {
+                                    !iconsState.isActiveTrackEndIconVisible
+                                } else {
+                                    iconsState.isInactiveTrackEndIconVisible
+                                },
+                            vertical = vertical,
+                            size = iconSize,
+                            icon = icon,
+                        )
+                    },
+                )
+            }
         },
+    )
+}
+
+/**
+ * Draws the filled part of the slider with the picked image. It is the same material track as the
+ * one inside [SliderTrack] with only the active segment visible (inactive is transparent), so the
+ * thumb gap and the rounded ends line up exactly, then the image is composited into that shape.
+ */
+@Composable
+private fun AxQsImageActiveTrack(
+    sliderState: androidx.compose.material3.SliderState,
+    brush: Brush,
+    trackCornerSize: Dp,
+    trackSize: Dp,
+) {
+    val colors =
+        SliderDefaults.colors(
+            activeTrackColor = Color.Black,
+            inactiveTrackColor = Color.Transparent,
+        )
+    SliderDefaults.Track(
+        sliderState = sliderState,
+        colors = colors,
+        enabled = true,
+        trackCornerSize = trackCornerSize,
+        trackInsideCornerSize = AxSliderTrackInsideCornerRadius,
+        drawStopIndicator = null,
+        thumbTrackGapSize = AxSliderThumbTrackGap,
+        drawTick = { _, _ -> },
+        modifier =
+            Modifier.height(trackSize)
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    drawRect(brush = brush, blendMode = BlendMode.SrcIn)
+                },
     )
 }
 

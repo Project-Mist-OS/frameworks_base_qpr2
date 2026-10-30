@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -267,6 +268,7 @@ internal fun ContentScope.AxQsMixedGrid(
         (item.value as? AxQsGridValue.Tile)?.let { AxTileGridLabel(it.viewModel) }
     }
 
+    CompositionLocalProvider(LocalAxQsImageFill provides axQsViewModel.imageFill) {
     QuickSettingsTheme {
         BoxWithConstraints(modifier) {
             val portraitPadding =
@@ -407,6 +409,7 @@ internal fun ContentScope.AxQsMixedGrid(
                     )
             }
         }
+    }
     }
     val tilesListening = !separateQqs && !(qqs && splitShade) && listening()
     DisposableEffect(visibleTiles, tilesListening) {

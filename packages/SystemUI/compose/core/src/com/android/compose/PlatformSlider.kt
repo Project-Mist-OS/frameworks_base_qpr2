@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -99,6 +100,7 @@ fun PlatformSlider(
     icon: (@Composable (isDragging: Boolean) -> Unit)? = null,
     label: (@Composable (isDragging: Boolean) -> Unit)? = null,
     indicatorBackground: (@Composable (Modifier, Dp) -> Unit)? = null,
+    indicatorBrush: Brush? = null,
 ) {
     val sliderHeight: Dp = 64.dp
     val thumbSize: Dp = sliderHeight
@@ -138,6 +140,7 @@ fun PlatformSlider(
                     label = label,
                     icon = icon,
                     indicatorBackground = indicatorBackground,
+                    indicatorBrush = indicatorBrush,
                     modifier = Modifier.fillMaxSize(),
                 )
             },
@@ -173,6 +176,7 @@ private fun Track(
     icon: (@Composable (isDragging: Boolean) -> Unit)?,
     label: (@Composable (isDragging: Boolean) -> Unit)?,
     indicatorBackground: (@Composable (Modifier, Dp) -> Unit)?,
+    indicatorBrush: Brush?,
     modifier: Modifier = Modifier,
 ) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -189,6 +193,7 @@ private fun Track(
                 draggingCornersRadiusIdle = sliderHeight / 2,
                 isDragging = isDragging,
                 indicatorBackground = indicatorBackground,
+                indicatorBrush = indicatorBrush,
             )
             if (icon != null) {
                 Box(
@@ -261,6 +266,7 @@ private fun TrackBackground(
     draggingCornersRadiusIdle: Dp,
     isDragging: Boolean,
     indicatorBackground: (@Composable (Modifier, Dp) -> Unit)?,
+    indicatorBrush: Brush?,
     modifier: Modifier = Modifier,
 ) {
     val indicatorRadiusDp: Dp by
@@ -313,7 +319,11 @@ private fun TrackBackground(
                             bottomLeftCornerRadius = trackCornerRadius,
                         )
                     )
-                    drawPath(path = indicatorPath, color = indicatorColor)
+                    if (indicatorBrush != null) {
+                        drawPath(path = indicatorPath, brush = indicatorBrush)
+                    } else {
+                        drawPath(path = indicatorPath, color = indicatorColor)
+                    }
                 }
             }
         }

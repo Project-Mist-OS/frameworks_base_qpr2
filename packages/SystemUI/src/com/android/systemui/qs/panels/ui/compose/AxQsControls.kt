@@ -138,6 +138,7 @@ private fun AxQsButtonControl(
                 .fillMaxSize()
                 .clip(CircleShape)
                 .background(background)
+                .axQsImageFill(active)
                 .clickable(enabled = interactive, role = Role.Switch, onClick = onClick)
                 .semantics { contentDescription = description },
     ) {

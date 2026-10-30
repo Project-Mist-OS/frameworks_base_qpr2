@@ -225,6 +225,12 @@ constructor(
             initialValue = false,
             source = repository.showDataUsage,
         )
+    val imageFill by
+        hydrator.hydratedStateOf(
+            traceName = "imageFill",
+            initialValue = repository.imageFill.value,
+            source = repository.imageFill,
+        )
 
     val customStyle by
         hydrator.hydratedStateOf(
