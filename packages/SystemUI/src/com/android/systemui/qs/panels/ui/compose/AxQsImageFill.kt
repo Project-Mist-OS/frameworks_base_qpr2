@@ -32,7 +32,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.luminance
 import com.android.systemui.qs.panels.shared.model.AxQsImageFill
 import kotlin.math.max
 
@@ -49,8 +52,33 @@ val LocalAxQsImageFill = staticCompositionLocalOf<AxQsImageFill?> { null }
 private class ImageFillBrush(
     private val bitmap: Bitmap,
     private val rotateQuarter: Boolean,
-) : ShaderBrush() {
-    override fun createShader(size: Size): Shader {
+    private val dim: Float,
+) : Brush() {
+    private var shader: Shader? = null
+    private var shaderSize = Size.Unspecified
+    private val colorFilter =
+        if (dim > 0f) {
+            val keep = 1f - dim
+            ColorFilter.colorMatrix(ColorMatrix().apply { setToScale(keep, keep, keep, 1f) })
+        } else {
+            null
+        }
+
+    override val intrinsicSize: Size
+        get() = Size.Unspecified
+
+    override fun applyTo(size: Size, p: Paint, alpha: Float) {
+        if (shader == null || shaderSize != size) {
+            shader = if (size.isEmpty()) null else createShader(size)
+            shaderSize = size
+        }
+        p.color = Color.Black
+        p.shader = shader
+        p.alpha = alpha
+        p.colorFilter = colorFilter
+    }
+
+    private fun createShader(size: Size): Shader {
         val boxWidth = if (rotateQuarter) size.height else size.width
         val boxHeight = if (rotateQuarter) size.width else size.height
         val scale = max(boxWidth / bitmap.width, boxHeight / bitmap.height)
@@ -67,10 +95,21 @@ private class ImageFillBrush(
     }
 
     override fun equals(other: Any?): Boolean =
-        other is ImageFillBrush && other.bitmap === bitmap && other.rotateQuarter == rotateQuarter
+        other is ImageFillBrush &&
+            other.bitmap === bitmap &&
+            other.rotateQuarter == rotateQuarter &&
+            other.dim == dim
 
-    override fun hashCode(): Int = 31 * System.identityHashCode(bitmap) + rotateQuarter.hashCode()
+    override fun hashCode(): Int =
+        31 * (31 * System.identityHashCode(bitmap) + rotateQuarter.hashCode()) + dim.hashCode()
 }
+
+// Extra darkening in dark mode so white labels and icons keep their contrast on bright areas.
+private const val DARK_MODE_DIM = 0.4f
+
+@Composable
+@ReadOnlyComposable
+private fun isDarkQsTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
 /**
  * Color for text and icons drawn on top of an active tile or slider. The theme's onPrimary is dark
@@ -81,14 +120,17 @@ private class ImageFillBrush(
 @ReadOnlyComposable
 internal fun axQsActiveContentColor(): Color {
     val fill = LocalAxQsImageFill.current ?: return MaterialTheme.colorScheme.onPrimary
-    return if (fill.isLight) Color.Black else Color.White
+    // The image is dimmed in dark mode, so it never needs dark content there.
+    return if (fill.isLight && !isDarkQsTheme()) Color.Black else Color.White
 }
 
 @Composable
-internal fun rememberAxQsImageBrush(fill: AxQsImageFill?, rotateQuarter: Boolean = false): Brush? =
-    remember(fill, rotateQuarter) {
-        fill?.let { ImageFillBrush(it.bitmap, rotateQuarter) }
+internal fun rememberAxQsImageBrush(fill: AxQsImageFill?, rotateQuarter: Boolean = false): Brush? {
+    val dim = if (isDarkQsTheme()) DARK_MODE_DIM else 0f
+    return remember(fill, rotateQuarter, dim) {
+        fill?.let { ImageFillBrush(it.bitmap, rotateQuarter, dim) }
     }
+}
 
 /**
  * Draws the image behind the content while [active] is true. Inactive and unavailable states are
