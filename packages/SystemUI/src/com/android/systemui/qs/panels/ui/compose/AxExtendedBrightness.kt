@@ -131,7 +131,9 @@ internal fun AxExtendedBrightnessPopup(
                     .safeDrawingPadding(),
             contentAlignment = Alignment.Center,
         ) {
-            val landscape = maxWidth > maxHeight
+            // Read the constraints here: inside the nested Box the implicit receiver is not accessible.
+            val availableHeight = maxHeight
+            val landscape = maxWidth > availableHeight
             val cardShape =
                 RoundedCornerShape(if (verticalStyle == AxQsVerticalSliderStyle.M3_EXPRESSIVE) 44.dp else 32.dp)
             Box(
@@ -147,13 +149,14 @@ internal fun AxExtendedBrightnessPopup(
                         viewModel = viewModel,
                         verticalStyle = verticalStyle,
                         sliderLength =
-                            minOf(PopupSliderLengthLandscape, maxHeight - 96.dp).coerceAtLeast(120.dp),
+                            minOf(PopupSliderLengthLandscape, availableHeight - 96.dp)
+                                .coerceAtLeast(120.dp),
                     )
                 } else {
                     PortraitContent(
                         viewModel = viewModel,
                         verticalStyle = verticalStyle,
-                        sliderLength = minOf(PopupSliderLength, maxHeight * 0.45f),
+                        sliderLength = minOf(PopupSliderLength, availableHeight * 0.45f),
                     )
                 }
             }
