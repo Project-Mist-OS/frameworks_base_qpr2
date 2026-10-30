@@ -242,7 +242,7 @@ class LockscreenNotificationStack {
             final float targetY = collapsed ? deckTop + depth * peek
                     : state.getYTranslation() + listOffset + i * extraGap;
             state.setYTranslation(MathUtils.lerp(state.getYTranslation(), targetY,
-                    amount));
+                    amount), "lockscreen stack");
             if (mEnabled) {
                 state.lockscreenStackRoundness = amount;
             }
@@ -264,10 +264,11 @@ class LockscreenNotificationStack {
                 }
             }
             if (i >= VISIBLE_CARDS) {
-                state.setAlpha(state.getAlpha() * (1f - amount));
+                state.setAlpha(state.getAlpha() * (1f - amount), "lockscreen stack");
                 state.hidden = amount == 1f;
             } else {
-                state.setAlpha(state.getAlpha() * (1f - depth * ALPHA_STEP * amount));
+                state.setAlpha(state.getAlpha() * (1f - depth * ALPHA_STEP * amount),
+                        "lockscreen stack");
             }
         }
 
@@ -289,11 +290,12 @@ class LockscreenNotificationStack {
             final float targetShelfY = showShelf
                     ? bottom - shelfState.height : shelfY + bottom - naturalBottom;
             final float newShelfY = MathUtils.lerp(shelfY, targetShelfY, amount);
-            shelfState.setYTranslation(newShelfY);
+            shelfState.setYTranslation(newShelfY, "lockscreen stack shelf");
             for (ExpandableView child : algorithmState.visibleChildren) {
                 ExpandableViewState state = child.getViewState();
                 if (state.inShelf) {
-                    state.setYTranslation(state.getYTranslation() + newShelfY - shelfY);
+                    state.setYTranslation(state.getYTranslation() + newShelfY - shelfY,
+                            "lockscreen stack shelf");
                 }
             }
         }
