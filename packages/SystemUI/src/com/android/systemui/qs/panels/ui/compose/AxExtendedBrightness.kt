@@ -52,6 +52,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -82,6 +83,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
 import com.android.systemui.keyguard.ui.transitions.BlurConfig
+import com.android.systemui.qs.panels.shared.model.AxQsImageFill
 import com.android.systemui.qs.panels.shared.model.AxQsVerticalSliderStyle
 import com.android.systemui.res.R
 
@@ -150,6 +152,7 @@ private fun rememberQsBlurRadiusPx(): Int {
 internal fun AxExtendedBrightnessPopup(
     viewModel: BrightnessSliderViewModel,
     verticalStyle: AxQsVerticalSliderStyle,
+    imageFill: AxQsImageFill?,
     onDismiss: () -> Unit,
 ) {
     Dialog(
@@ -179,6 +182,9 @@ internal fun AxExtendedBrightnessPopup(
                 else -> Color.White.copy(alpha = SCRIM_ALPHA_LIGHT)
             }
 
+        // Re-provide the tile image fill explicitly so the slider and toggles use the same custom
+        // image (or primary color) as the tiles in the QS grid.
+        CompositionLocalProvider(LocalAxQsImageFill provides imageFill) {
         BoxWithConstraints(
             modifier =
                 Modifier.fillMaxSize()
@@ -212,6 +218,7 @@ internal fun AxExtendedBrightnessPopup(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -384,7 +391,7 @@ private fun ExtendedToggle(
         animateColorAsState(
             targetValue =
                 if (active) {
-                    MaterialTheme.colorScheme.onSurface
+                    MaterialTheme.colorScheme.primary
                 } else {
                     // Translucent glass so the blurred backdrop shows through.
                     MaterialTheme.colorScheme.onSurface.copy(alpha = TOGGLE_INACTIVE_ALPHA)
@@ -394,7 +401,7 @@ private fun ExtendedToggle(
     val foreground by
         animateColorAsState(
             targetValue =
-                if (active) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+                if (active) axQsActiveContentColor() else MaterialTheme.colorScheme.onSurface,
             label = "AxExtendedToggleForeground",
         )
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(ToggleWidth)) {
@@ -404,6 +411,7 @@ private fun ExtendedToggle(
                 Modifier.size(ToggleSize)
                     .clip(RoundedCornerShape(corner))
                     .background(background)
+                    .axQsImageFill(active)
                     .toggleable(
                         value = active,
                         role = Role.Switch,

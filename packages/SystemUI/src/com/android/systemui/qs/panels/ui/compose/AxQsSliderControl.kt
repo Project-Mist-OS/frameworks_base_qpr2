@@ -261,8 +261,8 @@ private fun AxQsSlider(
     icon: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Glass sliders sit on the blurred extended brightness backdrop: a translucent track with a
-    // light (dark in light mode) fill, like the surrounding content.
+    // Glass sliders sit on the blurred extended brightness backdrop: a translucent track, while
+    // the filled part keeps the tile colors (primary or the custom image).
     val glass = LocalAxQsGlassTrack.current
     val inactiveTrackColor =
         if (glass) {
@@ -270,10 +270,6 @@ private fun AxQsSlider(
         } else {
             AxTileDefaults.backgroundColor()
         }
-    val activeColor =
-        if (glass) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
-    val onActiveColor =
-        if (glass) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onPrimary
     // Optional image shown instead of the primary color on the filled part. `vertical` means the
     // slider is rotated, so the brush counter-rotates to keep the image upright.
     val imageBrush =
@@ -281,7 +277,7 @@ private fun AxQsSlider(
         else null
     // The theme's onPrimary is dark in dark mode and unreadable on the image.
     val indicatorContentColor =
-        if (imageBrush != null) axQsActiveContentColor() else onActiveColor
+        if (imageBrush != null) axQsActiveContentColor() else MaterialTheme.colorScheme.onPrimary
     val sliderScale = if (vertical) sliderHeight / AxSliderTrackHeight else 1f
     val iconSize = if (vertical) AxSliderIconSize * sliderScale else HorizontalSliderIconSize
     if (vertical && verticalStyle == AxQsVerticalSliderStyle.PLATFORM) {
@@ -313,13 +309,13 @@ private fun AxQsSlider(
                 colors =
                     PlatformSliderColors(
                         trackColor = platformTrackColor,
-                        indicatorColor = activeColor,
+                        indicatorColor = MaterialTheme.colorScheme.primary,
                         iconColor = indicatorContentColor,
                         labelColorOnIndicator = indicatorContentColor,
                         labelColorOnTrack = MaterialTheme.colorScheme.onSurface,
                         disabledTrackColor = platformTrackColor.copy(alpha = 0.38f),
                         disabledIndicatorColor =
-                            activeColor.copy(alpha = 0.38f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
                         disabledIconColor =
                             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                         disabledLabelColor =
@@ -336,16 +332,16 @@ private fun AxQsSlider(
     }
     val colors =
         SliderDefaults.colors(
-            thumbColor = activeColor,
+            thumbColor = MaterialTheme.colorScheme.primary,
             // With an image the filled part is drawn by AxQsImageActiveTrack instead.
             activeTrackColor =
-                if (imageBrush != null) Color.Transparent else activeColor,
+                if (imageBrush != null) Color.Transparent else MaterialTheme.colorScheme.primary,
             activeTickColor = indicatorContentColor,
             inactiveTrackColor = inactiveTrackColor,
             inactiveTickColor = MaterialTheme.colorScheme.onSurface,
             disabledThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-            disabledActiveTrackColor = activeColor.copy(alpha = 0.38f),
-            disabledActiveTickColor = onActiveColor.copy(alpha = 0.38f),
+            disabledActiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+            disabledActiveTickColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.38f),
             disabledInactiveTrackColor = inactiveTrackColor.copy(alpha = 0.38f),
             disabledInactiveTickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
         )
@@ -601,10 +597,12 @@ internal fun AxQsBrightnessControl(
     var dragging by remember(vertical) { mutableStateOf(false) }
     var showExtended by remember { mutableStateOf(false) }
     val mirrorInOverlay = dragging && viewModel.showMirror
+    val imageFill = LocalAxQsImageFill.current
     if (showExtended) {
         AxExtendedBrightnessPopup(
             viewModel = viewModel,
             verticalStyle = verticalStyle,
+            imageFill = imageFill,
             onDismiss = { showExtended = false },
         )
     }
