@@ -55,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -260,7 +261,12 @@ private fun AxQsSlider(
     icon: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val inactiveTrackColor = AxTileDefaults.backgroundColor()
+    val inactiveTrackColor =
+        if (LocalAxQsGlassTrack.current) {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+        } else {
+            AxTileDefaults.backgroundColor()
+        }
     // Optional image shown instead of the primary color on the filled part. `vertical` means the
     // slider is rotated, so the brush counter-rotates to keep the image upright.
     val imageBrush =
@@ -550,6 +556,9 @@ private fun Modifier.axQsHoldToExpand(onHold: () -> Unit): Modifier {
     }
 }
 
+/** Makes the slider track translucent, for sliders drawn on a frosted glass surface. */
+private val LocalAxQsGlassTrack = compositionLocalOf { false }
+
 /** A large version of the brightness slider, using the same style as the QS slider. */
 @Composable
 internal fun AxQsExtendedBrightnessSlider(
@@ -557,18 +566,20 @@ internal fun AxQsExtendedBrightnessSlider(
     viewModel: BrightnessSliderViewModel,
     modifier: Modifier = Modifier,
 ) {
-    AxQsSliderControl(vertical = true, interceptParentScroll = false, modifier = modifier) {
-        sliderHeight,
-        verticalSlider ->
-        AxBrightnessSlider(
-            viewModel = viewModel,
-            sliderHeight = sliderHeight,
-            vertical = verticalSlider,
-            verticalStyle = verticalStyle,
-            // The extended panel has its own surface, so don't show the shade brightness mirror.
-            reportDragState = false,
-            modifier = Modifier.fillMaxWidth(),
-        )
+    CompositionLocalProvider(LocalAxQsGlassTrack provides true) {
+        AxQsSliderControl(vertical = true, interceptParentScroll = false, modifier = modifier) {
+            sliderHeight,
+            verticalSlider ->
+            AxBrightnessSlider(
+                viewModel = viewModel,
+                sliderHeight = sliderHeight,
+                vertical = verticalSlider,
+                verticalStyle = verticalStyle,
+                // The extended panel has its own surface, so don't show the shade brightness mirror.
+                reportDragState = false,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

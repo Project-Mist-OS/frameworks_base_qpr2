@@ -25,12 +25,15 @@ import android.hardware.display.ColorDisplayManager
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.CrossWindowBlurListeners
 import android.view.WindowManager
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -87,7 +90,12 @@ private val PopupSliderThicknessLandscape = 96.dp
 private val ToggleSize = 64.dp
 private val ToggleWidth = 84.dp
 private val ToggleInactiveCorner = 22.dp
-private const val SCRIM_ALPHA = 0.35f
+private const val SCRIM_ALPHA_DARK = 0.30f
+private const val SCRIM_ALPHA_LIGHT = 0.20f
+private const val CARD_ALPHA = 0.55f
+private const val CARD_ALPHA_NO_BLUR = 0.95f
+private const val CARD_BORDER_ALPHA = 0.10f
+private const val TOGGLE_INACTIVE_ALPHA = 0.12f
 private const val WINDOW_BLUR_RADIUS = 120
 
 @Composable
@@ -123,10 +131,21 @@ internal fun AxExtendedBrightnessPopup(
             }
         }
 
+        val darkTheme = isSystemInDarkTheme()
+        // Frosted glass needs the cross-window blur, otherwise fall back to a near opaque card.
+        val blurEnabled = remember { CrossWindowBlurListeners.getInstance().isCrossWindowBlurEnabled() }
+        val scrimColor =
+            if (darkTheme) Color.Black.copy(alpha = SCRIM_ALPHA_DARK)
+            else Color.White.copy(alpha = SCRIM_ALPHA_LIGHT)
+        val cardColor =
+            MaterialTheme.colorScheme.surfaceContainer.copy(
+                alpha = if (blurEnabled) CARD_ALPHA else CARD_ALPHA_NO_BLUR
+            )
+
         BoxWithConstraints(
             modifier =
                 Modifier.fillMaxSize()
-                    .background(Color.Black.copy(alpha = SCRIM_ALPHA))
+                    .background(scrimColor)
                     .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) }
                     .safeDrawingPadding(),
             contentAlignment = Alignment.Center,
@@ -139,7 +158,12 @@ internal fun AxExtendedBrightnessPopup(
             Box(
                 modifier =
                     Modifier.clip(cardShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .background(cardColor)
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = CARD_BORDER_ALPHA),
+                            cardShape,
+                        )
                         // Taps on the card must not dismiss the panel.
                         .pointerInput(Unit) { detectTapGestures(onTap = {}) }
                         .padding(if (landscape) 24.dp else 28.dp)
@@ -331,7 +355,12 @@ private fun ExtendedToggle(
     val background by
         animateColorAsState(
             targetValue =
-                if (active) MaterialTheme.colorScheme.primary else AxTileDefaults.backgroundColor(),
+                if (active) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    // Translucent so the blurred backdrop shows through the card.
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = TOGGLE_INACTIVE_ALPHA)
+                },
             label = "AxExtendedToggleBackground",
         )
     val foreground by
