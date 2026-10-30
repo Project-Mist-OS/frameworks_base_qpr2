@@ -17,6 +17,7 @@
 package com.android.systemui.statusbar.quickactions.media.ui.compose
 
 import android.content.Context
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.text.format.DateUtils
@@ -73,7 +74,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon as UiIcon
 import com.android.systemui.common.ui.compose.Icon as UiIconView
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.media.controls.shared.model.MediaAction
+import com.android.systemui.media.controls.ui.composable.StyledMediaSeekBar
 import com.android.systemui.media.controls.ui.drawable.SquigglyProgress
 import com.android.systemui.media.controls.ui.view.WaveformSeekBar
 import com.android.systemui.media.remedia.shared.flag.MediaControlsInComposeFlag
@@ -146,10 +149,12 @@ fun MediaControlPopup(
 @Composable
 fun MediaControlPopup(
     model: MediaControlChipModel,
-    useWaveform: Boolean = false,
+    seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
     modifier: Modifier = Modifier,
 ) {
     val accent = MaterialTheme.colorScheme.primary
+    val artworkDrawable =
+        remember(model.artworkIcon) { (model.artworkIcon as? UiIcon.Loaded)?.drawable }
     PopupSurface(
         shape = PopupShape,
         modifier = modifier.widthIn(min = 320.dp, max = 400.dp),
@@ -207,13 +212,14 @@ fun MediaControlPopup(
 
             if (model.durationMs > 0L) {
                 MediaProgressSection(
+                    artwork = artworkDrawable,
                     positionMs = model.positionMs,
                     durationMs = model.durationMs,
                     isPlaying = model.isPlaying,
                     canBeScrubbed = model.canBeScrubbed,
                     onSeekTo = model.seekTo,
                     accent = accent,
-                    useWaveform = useWaveform,
+                    seekBarStyle = seekBarStyle,
                 )
             }
 
@@ -274,14 +280,21 @@ private fun MediaArtwork(model: MediaControlChipModel) {
 
 @Composable
 private fun MediaProgressSection(
+    artwork: Drawable?,
     positionMs: Long,
     durationMs: Long,
     isPlaying: Boolean,
     canBeScrubbed: Boolean,
     onSeekTo: ((Long) -> Unit)?,
     accent: Color,
-    useWaveform: Boolean = false,
+    seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
 ) {
+    val seekBarHeight =
+        if (
+            seekBarStyle == MediaSeekBarStyle.GLOWING ||
+                seekBarStyle == MediaSeekBarStyle.GRADIENT_WAVE ||
+                seekBarStyle == MediaSeekBarStyle.COS
+        ) 34.dp else 28.dp
     var isScrubbing by remember { mutableStateOf(false) }
     var displayedPositionMs by remember { mutableStateOf(positionMs.coerceIn(0L, durationMs)) }
     val currentSeekAction by rememberUpdatedState(onSeekTo)
@@ -323,7 +336,7 @@ private fun MediaProgressSection(
             color = LocalContentColor.current.copy(alpha = 0.60f),
         )
 
-        Box(modifier = Modifier.weight(1f).height(28.dp)) {
+        Box(modifier = Modifier.weight(1f).height(seekBarHeight)) {
             var boxWidthPx by remember { mutableStateOf(0) }
 
             fun applyFraction(fraction: Float) {
@@ -359,9 +372,23 @@ private fun MediaProgressSection(
                         )
                     }
 
-            if (useWaveform) {
+            if (
+                seekBarStyle == MediaSeekBarStyle.GLOWING ||
+                    seekBarStyle == MediaSeekBarStyle.GRADIENT_WAVE ||
+                    seekBarStyle == MediaSeekBarStyle.COS
+            ) {
+                StyledMediaSeekBar(
+                    style = seekBarStyle,
+                    artwork = artwork,
+                    positionMs = displayedPositionMs,
+                    durationMs = durationMs,
+                    isPlaying = isPlaying,
+                    isScrubbing = isScrubbing,
+                    modifier = Modifier.fillMaxWidth().height(seekBarHeight).then(gestureModifier),
+                )
+            } else if (seekBarStyle == MediaSeekBarStyle.WAVEFORM) {
                 AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(28.dp).then(gestureModifier),
+                    modifier = Modifier.fillMaxWidth().height(seekBarHeight).then(gestureModifier),
                     factory = { context ->
                         WaveformSeekBar(context).apply {
                             max = 10_000
@@ -389,7 +416,7 @@ private fun MediaProgressSection(
                 )
             } else {
                 AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(28.dp).then(gestureModifier),
+                    modifier = Modifier.fillMaxWidth().height(seekBarHeight).then(gestureModifier),
                     factory = { context ->
                         SeekBar(context).apply {
                             max = durationMs.toClampedInt()

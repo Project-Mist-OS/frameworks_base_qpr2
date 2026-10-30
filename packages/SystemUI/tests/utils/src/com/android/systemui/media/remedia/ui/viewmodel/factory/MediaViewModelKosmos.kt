@@ -24,6 +24,7 @@ import com.android.systemui.media.remedia.domain.interactor.mediaInteractor
 import com.android.systemui.media.remedia.ui.viewmodel.MediaCarouselVisibility
 import com.android.systemui.media.remedia.ui.viewmodel.MediaViewModel
 import com.android.systemui.media.remedia.ui.viewmodel.mediaFalsingSystem
+import com.android.systemui.shared.settings.data.repository.systemSettingsRepository
 
 val Kosmos.mediaViewModelFactory by
     Kosmos.Fixture {
@@ -37,6 +38,7 @@ val Kosmos.mediaViewModelFactory by
                     falsingSystem = mediaFalsingSystem,
                     mediaLogger = mediaLogger,
                     mediaUiEventLogger = mediaUiEventLogger,
+                    systemSettingsRepository = systemSettingsRepository,
                     context = context,
                     carouselVisibility = carouselVisibility,
                 )

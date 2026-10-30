@@ -17,6 +17,7 @@ package com.android.systemui.nowplaying
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.LayerDrawable
 import android.graphics.PixelFormat
 import android.media.AudioManager
@@ -110,6 +111,8 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.android.compose.theme.PlatformTheme
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
+import com.android.systemui.media.controls.ui.composable.StyledMediaSeekBar
 import com.android.systemui.media.controls.ui.drawable.SquigglyProgress
 import com.android.systemui.media.controls.ui.view.WaveformSeekBar
 import com.android.systemui.res.R
@@ -687,9 +690,17 @@ private fun NowPlayingSeekBar(
     var displayFraction by remember { mutableFloatStateOf(serverFraction) }
     var isScrubbing by remember { mutableStateOf(false) }
     val onSeekRef = rememberUpdatedState(onSeekTo)
+    val resources = LocalContext.current.resources
+    val artwork = remember(state.albumArt, resources) {
+        state.albumArt?.let { BitmapDrawable(resources, it) }
+    }
+
+    DisposableEffect(state.seekBarStyle) {
+        onDispose { isScrubbing = false }
+    }
 
     LaunchedEffect(
-        state.positionUpdateTime, durationMs, state.isPlaying
+        state.positionUpdateTime, durationMs, state.isPlaying, isScrubbing
     ) {
         if (isScrubbing) return@LaunchedEffect
         val correctedStartMs: Long = if (state.isPlaying && durationMs > 0L
@@ -737,7 +748,28 @@ private fun NowPlayingSeekBar(
             }
         }
 
-        if (state.useWaveformSeekBar) {
+        if (
+            state.seekBarStyle == MediaSeekBarStyle.GLOWING ||
+                state.seekBarStyle == MediaSeekBarStyle.GRADIENT_WAVE ||
+                state.seekBarStyle == MediaSeekBarStyle.COS
+        ) {
+            StyledMediaSeekBar(
+                style = state.seekBarStyle,
+                artwork = artwork,
+                positionMs = progressMs,
+                durationMs = durationMs,
+                isPlaying = state.isPlaying,
+                isScrubbing = isScrubbing,
+                interactive = true,
+                onScrubStart = { isScrubbing = true },
+                onScrubStop = { isScrubbing = false },
+                onSeek = { position ->
+                    displayFraction = if (durationMs > 0L) position.toFloat() / durationMs else 0f
+                    onSeekRef.value(position)
+                },
+                modifier = Modifier.fillMaxWidth().height(34.dp),
+            )
+        } else if (state.seekBarStyle == MediaSeekBarStyle.WAVEFORM) {
             NowPlayingWaveformBar(
                 displayFraction = displayFraction,
                 durationMs = durationMs,

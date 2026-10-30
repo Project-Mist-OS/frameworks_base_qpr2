@@ -62,6 +62,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -86,6 +87,7 @@ import androidx.compose.material3.carousel.rememberCarouselState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -168,6 +170,8 @@ import com.android.systemui.common.ui.compose.load
 import com.android.systemui.common.ui.compose.singleton
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.lifecycle.rememberViewModel
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
+import com.android.systemui.media.controls.ui.compose.AndroidMediaSeekBar
 import com.android.systemui.media.remedia.shared.model.MediaCardActionButtonLayout
 import com.android.systemui.media.remedia.shared.model.MediaColorScheme
 import com.android.systemui.media.remedia.shared.model.MediaSessionState
@@ -810,6 +814,7 @@ private fun ContentScope.CardForegroundContent(
                         viewModel.actionButtonLayout == MediaCardActionButtonLayout.WithPlayPause
                     Navigation(
                         viewModel = viewModel.navigation,
+                        artwork = viewModel.background,
                         isSeekBarVisible = true,
                         isLeftActionVisible = areActionsVisible,
                         isRightActionVisible = areActionsVisible,
@@ -846,6 +851,7 @@ private fun ContentScope.CardForegroundContent(
                         viewModel.actionButtonLayout == MediaCardActionButtonLayout.WithPlayPause
                     Navigation(
                         viewModel = viewModel.navigation,
+                        artwork = viewModel.background,
                         isSeekBarVisible = false,
                         isLeftActionVisible = false,
                         isRightActionVisible = areActionsVisible,
@@ -1006,6 +1012,7 @@ private fun CardBackground(
 @Composable
 private fun ContentScope.Navigation(
     viewModel: MediaNavigationViewModel,
+    artwork: Icon?,
     isSeekBarVisible: Boolean,
     isLeftActionVisible: Boolean,
     isRightActionVisible: Boolean,
@@ -1042,6 +1049,36 @@ private fun ContentScope.Navigation(
                 if (isSeekBarVisible) {
                     // To allow the seek bar slider to fade in and out, it's tagged as an element.
                     Element(key = Media.Elements.SeekBarSlider, modifier = Modifier.weight(1f)) {
+                        val currentNavigation by
+                            rememberUpdatedState<MediaNavigationViewModel.Showing>(viewModel)
+                        DisposableEffect(viewModel.seekBarStyle) {
+                            onDispose {
+                                if (currentNavigation.isScrubbing) {
+                                    currentNavigation.onScrubFinished?.invoke(
+                                        Offset(0f, Float.MAX_VALUE),
+                                        true,
+                                    )
+                                }
+                            }
+                        }
+                        if (viewModel.seekBarStyle != MediaSeekBarStyle.DEFAULT) {
+                            AndroidMediaSeekBar(
+                                progress = viewModel.progress,
+                                durationMs = viewModel.durationMs,
+                                onScrubChange = viewModel.onScrubChange,
+                                onScrubFinished = viewModel.onScrubFinished,
+                                style = viewModel.seekBarStyle,
+                                artwork = (artwork as? Icon.Loaded)?.drawable,
+                                isPlaying = viewModel.isPlaying,
+                                isScrubbing = viewModel.isScrubbing,
+                                enabled = viewModel.onScrubChange != null,
+                                contentDescription = viewModel.contentDescription,
+                                color = colors.activeTrackColor,
+                                backgroundColor = colors.inactiveTrackColor,
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                            )
+                            return@Element
+                        }
                         val sliderDragDelta = remember {
                             // Not a mutableStateOf - this is never accessed in composition and
                             // using an anonymous object avoids generics boxing of inline Offset.

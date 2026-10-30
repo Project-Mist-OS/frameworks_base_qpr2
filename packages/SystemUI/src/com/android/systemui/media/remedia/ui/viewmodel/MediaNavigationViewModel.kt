@@ -18,6 +18,7 @@ package com.android.systemui.media.remedia.ui.viewmodel
 
 import androidx.annotation.FloatRange
 import androidx.compose.ui.geometry.Offset
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 
 /**
  * Models UI state for the navigation component of the UI (potentially containing the seek bar and
@@ -63,6 +64,12 @@ sealed interface MediaNavigationViewModel {
         val durationText: String,
         /** User-facing string for the media progress time */
         val progressText: String,
+        /** The user-selected style of the seek bar. */
+        val seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
+        /** The total duration of the media, in milliseconds. */
+        val durationMs: Long = 0L,
+        /** Whether the media is currently playing. */
+        val isPlaying: Boolean = isSquiggly,
     ) : MediaNavigationViewModel
 
     /** The seek bar should be hidden. */

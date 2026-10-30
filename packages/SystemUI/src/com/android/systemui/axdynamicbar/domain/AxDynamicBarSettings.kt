@@ -8,6 +8,7 @@ import com.android.systemui.axdynamicbar.model.IslandEvent
 import com.android.systemui.axdynamicbar.shared.EVENT_TYPE_IDS
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Main
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.util.settings.SecureSettings
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,8 +45,8 @@ class AxDynamicBarSettings @Inject constructor(
     private val _keyguardBatteryChipMode = MutableStateFlow(1)
     val keyguardBatteryChipMode: StateFlow<Int> = _keyguardBatteryChipMode.asStateFlow()
 
-    private val _useWaveformSeekBar = MutableStateFlow(false)
-    val useWaveformSeekBar: StateFlow<Boolean> = _useWaveformSeekBar.asStateFlow()
+    private val _seekBarStyle = MutableStateFlow(MediaSeekBarStyle.DEFAULT)
+    val seekBarStyle: StateFlow<MediaSeekBarStyle> = _seekBarStyle.asStateFlow()
     
     private val _chipStyle = MutableStateFlow(0)
     val chipStyle: StateFlow<Int> = _chipStyle.asStateFlow()
@@ -132,9 +133,7 @@ class AxDynamicBarSettings @Inject constructor(
             secureSettings.getIntForUser(KEY_KEYGUARD_MUSIC_PILL_ENABLED, 0, UserHandle.USER_CURRENT) == 1
         _chipStyle.value =
             secureSettings.getIntForUser(KEY_CHIP_STYLE, 0, UserHandle.USER_CURRENT)
-        _useWaveformSeekBar.value =
-            Settings.System.getIntForUser(
-                contentResolver, Settings.System.MEDIA_WAVEFORM_SEEKBAR, 0, UserHandle.USER_CURRENT,) == 1
+        _seekBarStyle.value = MediaSeekBarStyle.read(context)
 
         val json = secureSettings.getStringForUser(KEY_EVENTS, UserHandle.USER_CURRENT) ?: ""
         _disabledEventTypes.value =

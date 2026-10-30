@@ -19,6 +19,7 @@ package com.android.systemui.statusbar.quickactions.media.ui.viewmodel
 import androidx.compose.runtime.getValue
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.lifecycle.HydratedActivatable
 import com.android.systemui.statusbar.quickactions.media.domain.interactor.MediaControlChipInteractor
 import com.android.systemui.statusbar.quickactions.media.shared.model.MediaControlChipModel
@@ -48,9 +49,9 @@ constructor(
     override val chip: QuickActionChipModel by
         combine(
             mediaControlChipInteractor.mediaControlChipModel,
-            mediaControlChipInteractor.mediaUseWaveform,
-        ) { model, useWaveform ->
-            toPopupChipModel(model, useWaveform)
+            mediaControlChipInteractor.mediaSeekBarStyle,
+        ) { model, seekBarStyle ->
+            toPopupChipModel(model, seekBarStyle)
         }
             .hydratedStateOf(
                 traceName = "chip",
@@ -59,7 +60,7 @@ constructor(
 
         private fun toPopupChipModel(
             model: MediaControlChipModel?,
-            useWaveform: Boolean = false,
+            seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
         ): QuickActionChipModel {
         if (model == null || model.songName.isNullOrEmpty()) {
             return QuickActionChipModel.Hidden(QuickActionChipId.MediaControl)
@@ -82,7 +83,7 @@ constructor(
             chipContent = ChipContent.Text(songTitle),
             colors = ChipColors.DynamicIsland,
             contentDescription = contentDescription,
-            popupContent = PopupContentModel.Media(model, useWaveform),
+            popupContent = PopupContentModel.Media(model, seekBarStyle),
         )
     }
 

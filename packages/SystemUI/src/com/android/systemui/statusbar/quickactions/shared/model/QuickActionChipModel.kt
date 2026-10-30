@@ -20,6 +20,7 @@ import android.content.Context
 import android.graphics.RectF
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.statusbar.chips.ui.model.Chronometer
 import com.android.systemui.statusbar.quickactions.alarm.shared.model.AlarmPopupModel
 import com.android.systemui.statusbar.quickactions.flashlight.shared.model.FlashlightPopupModel
@@ -85,7 +86,7 @@ sealed interface PopupContentModel {
 
     data class Media(
         val model: MediaControlChipModel,
-        val useWaveform: Boolean = false,
+        val seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
     ) : PopupContentModel
 
     data class ScreenRecord(val model: ScreenRecordPopupModel) : PopupContentModel

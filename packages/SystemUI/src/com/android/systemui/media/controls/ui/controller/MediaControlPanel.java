@@ -33,6 +33,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.theming.ThemeStyle;
+import android.database.ContentObserver;
 import android.graphics.Bitmap;
 import android.graphics.BlendMode;
 import android.graphics.Color;
@@ -51,6 +52,8 @@ import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Process;
 import android.os.Trace;
 import android.os.UserHandle;
@@ -63,6 +66,7 @@ import android.view.ViewGroup;
 import android.view.animation.Interpolator;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -186,6 +190,20 @@ public class MediaControlPanel {
     private final CommunalSceneInteractor mCommunalSceneInteractor;
     private final CommunalTransitionAnimatorController.Factory mCommunalAnimationControllerFactory;
     private SeekBarObserver mSeekBarObserver;
+    private final ContentObserver mSeekBarStyleObserver =
+            new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    refreshSeekBarStyle();
+                }
+            };
+    private final NotificationLockscreenUserManager.UserChangedListener mSeekBarUserListener =
+            new NotificationLockscreenUserManager.UserChangedListener() {
+                @Override
+                public void onUserChanged(int userId) {
+                    refreshSeekBarStyle();
+                }
+            };
     protected final Executor mBackgroundExecutor;
     private final DelayableExecutor mMainExecutor;
     private final ActivityStarter mActivityStarter;
@@ -335,6 +353,8 @@ public class MediaControlPanel {
      * Clean up seekbar and controller when panel is destroyed
      */
     public void onDestroy() {
+        mContext.getContentResolver().unregisterContentObserver(mSeekBarStyleObserver);
+        mLockscreenUserManager.removeUserChangedListener(mSeekBarUserListener);
         if (mController != null) {
             mController.unregisterCallback(mCb);
             mController = null;
@@ -451,9 +471,41 @@ public class MediaControlPanel {
         return mContext;
     }
 
+    private void refreshSeekBarStyle() {
+        if (mMediaViewHolder == null) {
+            return;
+        }
+        SeekBar oldBar = mMediaViewHolder.getSeekBar();
+        boolean wasScrubbing = mIsScrubbing || oldBar.isPressed();
+        if (!mMediaViewHolder.refreshSeekBarStyle()) {
+            return;
+        }
+        if (wasScrubbing) {
+            mSeekBarViewModel.onSeekFalse();
+            mSeekBarViewModel.onSeek(oldBar.getProgress());
+        }
+        if (mSeekBarObserver != null) {
+            if (mSeekBarObserver.getSeekBarResetAnimator() != null) {
+                mSeekBarObserver.getSeekBarResetAnimator().cancel();
+            }
+            mSeekBarViewModel.getProgress().removeObserver(mSeekBarObserver);
+        }
+        mSeekBarViewModel.attachTouchHandlers(mMediaViewHolder.getSeekBar());
+        mSeekBarObserver = new SeekBarObserver(mMediaViewHolder);
+        updateAnimatorDurationScale();
+        mSeekBarViewModel.getProgress().observeForever(mSeekBarObserver);
+    }
+
     /** Attaches the player to the player view holder. */
     public void attachPlayer(MediaViewHolder vh) {
         mMediaViewHolder = vh;
+        mLockscreenUserManager.removeUserChangedListener(mSeekBarUserListener);
+        mLockscreenUserManager.addUserChangedListener(mSeekBarUserListener);
+        mContext.getContentResolver().unregisterContentObserver(mSeekBarStyleObserver);
+        mContext.getContentResolver().registerContentObserver(
+                Settings.System.getUriFor(Settings.System.MEDIA_WAVEFORM_SEEKBAR),
+                false, mSeekBarStyleObserver, UserHandle.USER_ALL);
+        vh.refreshSeekBarStyle();
         TransitionLayout player = vh.getPlayer();
 
         mSeekBarObserver = new SeekBarObserver(vh);
@@ -966,6 +1018,7 @@ public class MediaControlPanel {
                 }
                 mArtworkBoundId = reqId;
 
+                mMediaViewHolder.setSeekBarArtwork(albumArt);
                 MediaSessionManager.Companion.get().onAlbumArtChanged(albumArt);
                 MediaSessionManager.Companion.get().onMediaColorsChanged(colorScheme.getAccent1().getS100());
                 mPulseAudioBridge.onMediaColorsChanged(colorScheme.getAccent1().getS100());

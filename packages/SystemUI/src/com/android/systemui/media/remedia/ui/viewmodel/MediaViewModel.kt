@@ -20,6 +20,7 @@ import android.content.Context
 import android.icu.text.MeasureFormat
 import android.icu.util.Measure
 import android.icu.util.MeasureUnit
+import android.provider.Settings
 import android.text.format.DateUtils
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -34,6 +35,7 @@ import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.lifecycle.HydratedActivatable
 import com.android.systemui.media.controls.shared.MediaLogger
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.media.controls.util.MediaUiEventLogger
 import com.android.systemui.media.remedia.domain.interactor.MediaInteractor
 import com.android.systemui.media.remedia.domain.model.MediaActionModel
@@ -42,6 +44,7 @@ import com.android.systemui.media.remedia.shared.model.MediaColorScheme
 import com.android.systemui.media.remedia.shared.model.MediaSessionState
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -49,6 +52,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.flow.map
 
 /** Models UI state for a media element. */
 class MediaViewModel
@@ -58,9 +62,20 @@ constructor(
     private val falsingSystem: MediaFalsingSystem,
     val mediaLogger: MediaLogger,
     val mediaUiEventLogger: MediaUiEventLogger,
+    systemSettingsRepository: SystemSettingsRepository,
     @Assisted private val context: Context,
     @Assisted private val carouselVisibility: MediaCarouselVisibility,
 ) : HydratedActivatable() {
+
+    /** The user-selected style of the seek bar. */
+    private val seekBarStyle: MediaSeekBarStyle by
+        systemSettingsRepository
+            .intSetting(
+                Settings.System.MEDIA_WAVEFORM_SEEKBAR,
+                defaultValue = MediaSeekBarStyle.DEFAULT.value,
+            )
+            .map(MediaSeekBarStyle::fromValue)
+            .hydratedStateOf(initialValue = MediaSeekBarStyle.DEFAULT)
 
     /** Whether the user is actively moving the thumb of the seek bar. */
     private var isScrubbing: Boolean by mutableStateOf(false)
@@ -186,6 +201,9 @@ constructor(
                                             formatTimeLabel(session.positionMs)
                                         },
                                     durationText = formatTimeLabel(session.durationMs),
+                                    seekBarStyle = seekBarStyle,
+                                    durationMs = session.durationMs,
+                                    isPlaying = session.state == MediaSessionState.Playing,
                                 )
                             } else {
                                 MediaNavigationViewModel.Hidden(

@@ -282,7 +282,7 @@ fun StatusBarPopup(
                 when (val popupContent = viewModel.popupContent) {
                     is PopupContentModel.Media -> {
                         val model = popupContent.model
-                        val useWaveform = popupContent.useWaveform
+                        val seekBarStyle = popupContent.seekBarStyle
                         val hasLyrics =
                             !model.lyrics.isNullOrBlank() || !model.syncedLyrics.isNullOrBlank()
                         if (hasLyrics) {
@@ -290,11 +290,11 @@ fun StatusBarPopup(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                MediaControlPopup(model = model, useWaveform = useWaveform)
+                                MediaControlPopup(model = model, seekBarStyle = seekBarStyle)
                                 LyricsCard(model = model)
                             }
                         } else {
-                            MediaControlPopup(model = model, useWaveform = useWaveform)
+                            MediaControlPopup(model = model, seekBarStyle = seekBarStyle)
                         }
                     }
                     is PopupContentModel.ScreenRecord -> ScreenRecordPopup(model = popupContent.model)

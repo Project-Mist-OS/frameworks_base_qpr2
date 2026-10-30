@@ -8,6 +8,7 @@ import com.android.systemui.biometrics.AuthController
 import com.android.systemui.biometrics.domain.interactor.UdfpsOverlayInteractor
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.statusbar.KeyguardIndicationController
 import com.android.systemui.statusbar.pipeline.battery.domain.interactor.BatteryInteractor
 import com.android.systemui.statusbar.policy.BatteryController
@@ -85,7 +86,7 @@ constructor(
     val isKeyguardEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardEnabled
     val keyguardBatteryChipMode: StateFlow<Int> = interactor.settings.keyguardBatteryChipMode
     val isKeyguardMusicPillEnabled: StateFlow<Boolean> = interactor.settings.isKeyguardMusicPillEnabled
-    val mediaUseWaveform: StateFlow<Boolean> = interactor.mediaUseWaveform
+    val mediaSeekBarStyle: StateFlow<MediaSeekBarStyle> = interactor.mediaSeekBarStyle
     val chipStyle: StateFlow<Int> = interactor.settings.chipStyle
 
     val keyguardBatteryInfo: StateFlow<KeyguardBatteryInfo> =

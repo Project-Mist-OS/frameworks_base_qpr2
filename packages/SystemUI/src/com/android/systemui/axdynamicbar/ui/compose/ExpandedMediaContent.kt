@@ -67,6 +67,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.android.systemui.axdynamicbar.shared.IslandActions
 import com.android.systemui.axdynamicbar.model.IslandEvent
 import com.android.systemui.axdynamicbar.shared.*
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
+import com.android.systemui.media.controls.ui.composable.StyledMediaSeekBar
 import com.android.systemui.media.controls.ui.drawable.SquigglyProgress
 import com.android.systemui.res.R
 import kotlinx.coroutines.delay
@@ -90,10 +92,10 @@ private val ArtistNameColor = Color.White.copy(alpha = 0.8f)
 internal fun MediaCard(event: IslandEvent.Media, interactor: IslandActions) {
     val colors = rememberMediaColors(event)
     val accent = colors.accent
-    val useWaveform = if (interactor is com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor) {
-        interactor.mediaUseWaveform.collectAsStateWithLifecycle().value
+    val seekBarStyle = if (interactor is com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor) {
+        interactor.mediaSeekBarStyle.collectAsStateWithLifecycle().value
     } else {
-        false
+        MediaSeekBarStyle.DEFAULT
     }
 
     Surface(
@@ -204,7 +206,7 @@ internal fun MediaCard(event: IslandEvent.Media, interactor: IslandActions) {
                     verticalArrangement = Arrangement.spacedBy(SpaceLg),
                 ) {
                     if (event.duration > 0L) {
-                        MediaSeekBar(event, interactor, accent, useWaveform)
+                        MediaSeekBar(event, interactor, accent, seekBarStyle)
                     }
                     MediaControls(event, interactor, accent)
                 }
@@ -219,10 +221,10 @@ internal fun MediaExpanded(
     interactor: IslandActions,
     modifier: Modifier = Modifier,
 ) {
-    val useWaveform = if (interactor is com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor) {
-        interactor.mediaUseWaveform.collectAsStateWithLifecycle().value
+    val seekBarStyle = if (interactor is com.android.systemui.axdynamicbar.domain.AxDynamicBarInteractor) {
+        interactor.mediaSeekBarStyle.collectAsStateWithLifecycle().value
     } else {
-        false
+        MediaSeekBarStyle.DEFAULT
     }
     val colors = rememberMediaColors(event)
     val accent = colors.accent
@@ -291,7 +293,7 @@ internal fun MediaExpanded(
 
         MediaControls(event, interactor, accent)
         if (event.duration > 0L) {
-            MediaSeekBar(event, interactor, accent, useWaveform)
+            MediaSeekBar(event, interactor, accent, seekBarStyle)
         }
     }
 }
@@ -388,8 +390,14 @@ private fun MediaSeekBar(
     event: IslandEvent.Media,
     interactor: IslandActions,
     accent: Color,
-    useWaveform: Boolean = false,
+    seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
 ) {
+    val seekBarHeight =
+        if (
+            seekBarStyle == MediaSeekBarStyle.GLOWING ||
+                seekBarStyle == MediaSeekBarStyle.GRADIENT_WAVE ||
+                seekBarStyle == MediaSeekBarStyle.COS
+        ) 34.dp else SeekBarHeight
     val mediaProgress = rememberMediaProgress(event)
     val isPlaying = event.isPlaying
     val durationMs = event.duration
@@ -402,7 +410,7 @@ private fun MediaSeekBar(
     val interactorRef = rememberUpdatedState(interactor)
     val swipeLock = LocalDismissSwipeLock.current
 
-    LaunchedEffect(positionMs, durationMs, isPlaying) {
+    LaunchedEffect(positionMs, durationMs, isPlaying, isScrubbing) {
         if (isScrubbing) return@LaunchedEffect
         displayFraction = serverFraction
         if (!isPlaying || durationMs <= 0L) return@LaunchedEffect
@@ -436,7 +444,7 @@ private fun MediaSeekBar(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .height(SeekBarHeight)
+                .height(seekBarHeight)
                 .pointerInput(swipeLock) {
                     awaitEachGesture {
                         awaitPointerEvent()
@@ -477,7 +485,21 @@ private fun MediaSeekBar(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            if (useWaveform) {
+            if (
+                seekBarStyle == MediaSeekBarStyle.GLOWING ||
+                    seekBarStyle == MediaSeekBarStyle.GRADIENT_WAVE ||
+                    seekBarStyle == MediaSeekBarStyle.COS
+            ) {
+                StyledMediaSeekBar(
+                    style = seekBarStyle,
+                    artwork = event.albumArt,
+                    positionMs = displayMs,
+                    durationMs = durationMs,
+                    isPlaying = isPlaying,
+                    isScrubbing = isScrubbing,
+                    modifier = Modifier.fillMaxWidth().height(seekBarHeight),
+                )
+            } else if (seekBarStyle == MediaSeekBarStyle.WAVEFORM) {
                 AndroidView(
                     factory = { context ->
                         WaveformSeekBar(context).apply {
@@ -495,7 +517,7 @@ private fun MediaSeekBar(
                             !isPlaying && bar.isPlaying -> bar.stopWaveAnimation()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(SeekBarHeight),
+                    modifier = Modifier.fillMaxWidth().height(seekBarHeight),
                 )
             } else {
                 AndroidView(
@@ -569,7 +591,7 @@ private fun MediaSeekBar(
                         }
                         layer?.alpha = alpha
                     },
-                    modifier = Modifier.fillMaxWidth().height(SeekBarHeight),
+                    modifier = Modifier.fillMaxWidth().height(seekBarHeight),
                 )
             }
         }

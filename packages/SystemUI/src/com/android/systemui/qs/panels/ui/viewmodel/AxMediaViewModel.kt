@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.panels.ui.viewmodel
 
+import android.provider.Settings
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -31,6 +32,7 @@ import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.media.controls.domain.pipeline.interactor.MediaCarouselInteractor
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.media.remedia.domain.interactor.MediaInteractor
 import com.android.systemui.media.remedia.domain.model.MediaActionModel
 import com.android.systemui.media.remedia.domain.model.MediaOutputDeviceModel
@@ -41,12 +43,15 @@ import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.qs.panels.data.repository.AxMediaHistoryRepository
 import com.android.systemui.qs.panels.shared.model.AxMediaSurface
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import javax.inject.Inject
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 
 class AxMediaViewModel
 @Inject
@@ -60,6 +65,7 @@ constructor(
     @Main private val mainDispatcher: CoroutineDispatcher,
     private val shadeInteractor: ShadeInteractor,
     private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
+    systemSettingsRepository: SystemSettingsRepository,
 ) {
     private var scrubbingSessionKey: Any? by mutableStateOf(null)
     private var gutsSessionKey: Any? by mutableStateOf(null)
@@ -77,6 +83,14 @@ constructor(
 
     val showOnLockscreen = mediaCarouselInteractor.allowMediaOnLockscreen
     val isShadeExpanded: StateFlow<Boolean> = shadeInteractor.isAnyExpanded
+    val isShadeInteracting: StateFlow<Boolean> = shadeInteractor.isUserInteracting
+    val seekBarStyle: Flow<MediaSeekBarStyle> =
+        systemSettingsRepository
+            .intSetting(
+                Settings.System.MEDIA_WAVEFORM_SEEKBAR,
+                defaultValue = MediaSeekBarStyle.DEFAULT.value,
+            )
+            .map(MediaSeekBarStyle::fromValue)
     val currentKeyguardState: StateFlow<KeyguardState> = keyguardTransitionInteractor.currentKeyguardState
     val lastMediaPackage = mediaHistoryRepository.lastMediaPackage
 

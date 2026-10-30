@@ -37,6 +37,7 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.media.NotificationMediaManager
 import com.android.systemui.media.controls.domain.pipeline.getNotificationActions
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import com.android.systemui.media.controls.shared.model.MediaAction
 import com.android.systemui.media.controls.shared.model.MediaButton
 import com.android.systemui.media.controls.shared.model.MediaData
@@ -171,12 +172,13 @@ constructor(
                 }
         }
 
-    val mediaUseWaveform: StateFlow<Boolean> =
-        DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled(
-            context,
-            Settings.System.MEDIA_WAVEFORM_SEEKBAR,
-            false,
-        ).stateIn(backgroundScope, SharingStarted.WhileSubscribed(), false)
+    val mediaSeekBarStyle: StateFlow<MediaSeekBarStyle> =
+        MediaSeekBarStyle.observe(context)
+            .stateIn(
+                backgroundScope,
+                SharingStarted.WhileSubscribed(),
+                MediaSeekBarStyle.read(context),
+            )
 
     /** The currently active [MediaControlChipModel] */
     val mediaControlChipModel: StateFlow<MediaControlChipModel?> =

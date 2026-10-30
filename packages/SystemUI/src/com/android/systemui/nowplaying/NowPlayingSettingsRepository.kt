@@ -24,6 +24,7 @@ import android.os.Looper
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.Log
+import com.android.systemui.media.controls.shared.MediaSeekBarStyle
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
 
@@ -39,7 +40,7 @@ data class NowPlayingSettings(
     val showOnAod: Boolean,
     val showOnLockscreen: Boolean,
     val tapToExpand: Boolean = true,
-    val useWaveformSeekBar: Boolean = false,
+    val seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
     val useLyricsMode: Boolean = false
 )
 
@@ -79,7 +80,7 @@ class NowPlayingSettingsRepository(context: Context) {
         val showAod = flows[8] as Int
         val showLock = flows[9] as Int
         val tapToExpand = flows[10] as Int
-        val waveform = flows[11] as Int
+        val seekBarStyle = MediaSeekBarStyle.fromValue(flows[11] as Int)
         val lyricsMode = flows[12] as Int
         val position = (positionInt / 100f).coerceIn(0.1f, 1.0f)
         val iconStyleClamped = iconStyle.coerceIn(0, 2)
@@ -99,7 +100,7 @@ class NowPlayingSettingsRepository(context: Context) {
             showOnAod = showAod == 1,
             showOnLockscreen = showLock == 1,
             tapToExpand = tapToExpand == 1,
-            useWaveformSeekBar = waveform == 1,
+            seekBarStyle = seekBarStyle,
             useLyricsMode = lyricsMode == 1,
         )
     }.distinctUntilChanged()
@@ -160,9 +161,11 @@ class NowPlayingSettingsRepository(context: Context) {
             tapToExpand = Settings.System.getIntForUser(
                 resolver, SETTING_TAP_TO_EXPAND, 1, UserHandle.USER_CURRENT
             ) == 1,
-            useWaveformSeekBar = Settings.System.getIntForUser(
-                resolver, SETTING_WAVEFORM_SEEKBAR, 0, UserHandle.USER_CURRENT
-            ) == 1,
+            seekBarStyle = MediaSeekBarStyle.fromValue(
+                Settings.System.getIntForUser(
+                    resolver, SETTING_WAVEFORM_SEEKBAR, 0, UserHandle.USER_CURRENT
+                )
+            ),
             useLyricsMode = Settings.System.getIntForUser(
                 resolver, SETTING_LYRICS_MODE, 0, UserHandle.USER_CURRENT
             ) == 1,

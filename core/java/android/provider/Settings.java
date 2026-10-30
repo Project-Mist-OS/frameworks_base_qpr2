@@ -7322,6 +7322,8 @@ public final class Settings {
         public static final String ON_THE_GO_CAMERA = "on_the_go_camera";
 
         /**
+         * Media seekbar style: 0 for default, 1 for waveform, 2 for glowing, 3 for gradient wave,
+         * 4 for COS.
          * @hide
          */
         public static final String MEDIA_WAVEFORM_SEEKBAR = "media_waveform_seekbar";
