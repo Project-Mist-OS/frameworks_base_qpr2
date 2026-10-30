@@ -96,8 +96,11 @@ constructor(
 
     private val unlockAnimation: Int
         get() {
+            val legacy = Settings.System.getIntForUser(context.contentResolver,
+                Settings.System.LOCKSCREEN_WATER_RIPPLE_ENABLED, 0, UserHandle.USER_CURRENT)
             val selected = Settings.System.getIntForUser(context.contentResolver,
-                Settings.System.LOCKSCREEN_UNLOCK_ANIMATION, 0, UserHandle.USER_CURRENT)
+                Settings.System.LOCKSCREEN_UNLOCK_ANIMATION, if (legacy == 1) 1 else 0,
+                UserHandle.USER_CURRENT)
             return if (selected in 0..GlowRippleShader.EFFECT_RAINBOW_GLOW) selected else 0
         }
 
@@ -260,6 +263,20 @@ constructor(
 
     private val keyguardUpdateMonitorCallback =
         object : KeyguardUpdateMonitorCallback() {
+            override fun onStartedGoingToSleep(why: Int) {
+                // Don't leave an unlock effect running over the screen that turned off.
+                mView.cancelUnlockedRipple()
+            }
+
+            override fun onKeyguardVisibilityChanged(visible: Boolean) {
+                // Relocking must not leave the previous unlock effect above the keyguard.
+                if (visible) mView.cancelUnlockedRipple()
+            }
+
+            override fun onUserSwitching(userId: Int) {
+                mView.cancelUnlockedRipple()
+            }
+
             override fun onBiometricAuthenticated(
                 userId: Int,
                 biometricSourceType: BiometricSourceType,

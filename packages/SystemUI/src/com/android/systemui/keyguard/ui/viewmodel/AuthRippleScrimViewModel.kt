@@ -61,8 +61,23 @@ constructor(
      * unlock ripple.
      */
     val unlockAnimation: Int by
-        systemSettingsRepository
-            .intSetting(Settings.System.LOCKSCREEN_UNLOCK_ANIMATION, defaultValue = 0)
+        combine(
+                systemSettingsRepository.boolSetting(
+                    Settings.System.LOCKSCREEN_WATER_RIPPLE_ENABLED,
+                    defaultValue = false,
+                ),
+                systemSettingsRepository.intSetting(
+                    Settings.System.LOCKSCREEN_UNLOCK_ANIMATION,
+                    defaultValue = UNSET_ANIMATION,
+                ),
+            ) { legacyWater, selected ->
+                // An unset animation honors the legacy water ripple preference.
+                if (selected == UNSET_ANIMATION) {
+                    if (legacyWater) 1 else 0
+                } else {
+                    selected
+                }
+            }
             .hydratedStateOf(initialValue = 0)
 
     /** Whether custom unlock effects should animate at the display refresh rate. */
@@ -127,7 +142,7 @@ constructor(
                     centerY = origin.y,
                     maxRadius = dwellRadius,
                     color = color,
-                    distortionStrength = DwellEffectConfig.DEFAULT_DISTORTION_STRENGTH,
+                    distortionStrength = DWELL_DISTORTION_STRENGTH,
                     expandingAnimationConfig =
                         AnimationConfig(
                             duration =
@@ -224,8 +239,12 @@ constructor(
             FadeParams(fadeInStart = 0f, fadeInEnd = .2f, fadeOutStart = .2f, fadeOutEnd = 1f)
         val centerFillFadeParams =
             FadeParams(fadeInStart = 0f, fadeInEnd = .15f, fadeOutStart = .15f, fadeOutEnd = .56f)
-        const val RIPPLE_SPARKLE_STRENGTH: Float = 0.3f
-        const val DWELL_RADIUS_SCALE = 1.5F
+        const val RIPPLE_SPARKLE_STRENGTH: Float = 0.7f
+        const val DWELL_RADIUS_SCALE = 1.7F
+        const val DWELL_DISTORTION_STRENGTH = 0.8F
+
+        /** Marks [Settings.System.LOCKSCREEN_UNLOCK_ANIMATION] as never chosen. */
+        private const val UNSET_ANIMATION = -1
         const val TAG = "AuthRippleScrimViewModel"
     }
 }

@@ -37,7 +37,7 @@ import com.android.settingslib.Utils
 import com.android.systemui.surfaceeffects.core.dwellrippleeffect.DwellRippleShader
 import com.android.systemui.surfaceeffects.core.ripple.RippleShader
 
-private const val RIPPLE_SPARKLE_STRENGTH: Float = 0.3f
+private const val RIPPLE_SPARKLE_STRENGTH: Float = 0.7f
 private const val FULLSCREEN_WATER_DURATION: Long = 1400L
 
 /**
@@ -87,7 +87,7 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
     private var radius: Float = 0f
         set(value) {
             field = value * .9f
-            rippleShader.rippleSize.setMaxSize(field * 2f, field * 2f)
+            rippleShader.rippleSize.setMaxSize(field * 2.2f, field * 2.2f)
         }
 
     private var origin: Point = Point()
@@ -107,7 +107,7 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
 
         dwellShader.color = 0xffffffff.toInt() // default color
         dwellShader.progress = 0f
-        dwellShader.distortionStrength = .4f
+        dwellShader.distortionStrength = .8f
         dwellPaint.shader = dwellShader
         setWillNotDraw(false)
         visibility = GONE
@@ -122,7 +122,7 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
         origin = location
         radius = maxOf(location.x, location.y, width - location.x, height - location.y).toFloat()
         dwellOrigin = location
-        dwellRadius = sensorRadius * 1.5f
+        dwellRadius = sensorRadius * 1.7f
     }
 
     /** Animate dwell ripple inwards back to radius 0 */
@@ -224,6 +224,7 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
     fun startDwellRipple(isDozing: Boolean) {
         if (
             waterRipple != null ||
+                drawGlow ||
                 unlockedRippleAnimator?.isRunning == true ||
                 dwellPulseOutAnimator?.isRunning == true
         ) {

@@ -7252,8 +7252,18 @@ public final class Settings {
         public static final String ENABLE_RIPPLE_EFFECT = "enable_ripple_effect";
 
         /**
+         * Use the water ripple for fingerprint unlock instead of the default ripple.
+         * Per-user opt-in: 0 (default) uses the platform animation; 1 uses water ripple.
+         * ENABLE_RIPPLE_EFFECT remains the master switch for authentication ripples.
+         * @hide
+         */
+        public static final String LOCKSCREEN_WATER_RIPPLE_ENABLED =
+                "lockscreen_water_ripple_enabled";
+
+        /**
          * Fingerprint unlock animation: 0 = platform ripple (default), 1 = water, 2 = watercolor,
          * 3 = glow ripple wave, 4 = rainbow glow with micro particles.
+         * If unset, SystemUI honors the legacy LOCKSCREEN_WATER_RIPPLE_ENABLED preference.
          * ENABLE_RIPPLE_EFFECT remains the master switch.
          * @hide
          */
