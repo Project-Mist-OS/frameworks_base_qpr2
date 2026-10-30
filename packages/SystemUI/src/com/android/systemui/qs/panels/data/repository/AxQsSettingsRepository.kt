@@ -39,6 +39,7 @@ import com.android.systemui.qs.panels.shared.model.AxQsVerticalSliderStyle
 import com.android.systemui.user.data.repository.UserRepository
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -109,8 +110,8 @@ constructor(
     val showWeather: StateFlow<Boolean> = boolSetting(SHOW_WEATHER, true)
     val showDataUsage: StateFlow<Boolean> = boolSetting(SHOW_DATA_USAGE, false)
 
-    // The picked image lives in MediaStore and its uri in secure settings, so both survive a
-    // reboot or a SystemUI restart. The decoded bitmap is cached here for the process lifetime.
+    // The picked image lives in /sdcard/MistOS/QSTileImage and its path in secure settings, so
+    // both survive a reboot or a SystemUI restart. The decoded bitmap is cached here for the process lifetime.
     val imageFillEnabled: StateFlow<Boolean> = boolSetting(IMAGE_FILL_ENABLED, false)
     val imageFill: StateFlow<AxQsImageFill?> =
         combine(imageFillEnabled, stringSetting(IMAGE_FILL_URI)) { enabled, uri ->
@@ -417,7 +418,13 @@ constructor(
 
     private fun loadImageFill(uri: String): AxQsImageFill? {
         return try {
-            val source = ImageDecoder.createSource(context.contentResolver, Uri.parse(uri))
+            // Mistify stores the image as a plain file in /sdcard/MistOS/QSTileImage.
+            val source =
+                if (uri.startsWith("/")) {
+                    ImageDecoder.createSource(File(uri))
+                } else {
+                    ImageDecoder.createSource(context.contentResolver, Uri.parse(uri))
+                }
             val bitmap =
                 ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
