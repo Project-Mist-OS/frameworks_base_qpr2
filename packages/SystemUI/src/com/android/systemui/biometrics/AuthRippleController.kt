@@ -29,6 +29,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.keyguard.KeyguardUpdateMonitorCallback
 import com.android.keyguard.logging.KeyguardLogger
+import com.android.lunaris.waterripple.WaterRippleView
 import com.android.settingslib.Utils
 import com.android.systemui.CoreStartable
 import com.android.systemui.biometrics.data.repository.FacePropertyRepository
@@ -92,6 +93,21 @@ constructor(
         get() = Settings.System.getIntForUser(context.contentResolver,
             Settings.System.ENABLE_RIPPLE_EFFECT, 1, UserHandle.USER_CURRENT) == 1
 
+    private val unlockAnimation: Int
+        get() {
+            val selected = Settings.System.getIntForUser(context.contentResolver,
+                Settings.System.LOCKSCREEN_UNLOCK_ANIMATION, 0, UserHandle.USER_CURRENT)
+            return if (selected in 0..GlowRippleShader.EFFECT_RAINBOW_GLOW) selected else 0
+        }
+
+    private val isUnlockEffectHfr: Boolean
+        get() = Settings.System.getIntForUser(context.contentResolver,
+            Settings.System.LOCKSCREEN_UNLOCK_EFFECT_HFR, 0, UserHandle.USER_CURRENT) == 1
+
+    private val isWaterRippleFullscreen: Boolean
+        get() = Settings.System.getIntForUser(context.contentResolver,
+            Settings.System.LOCKSCREEN_WATER_RIPPLE_FULLSCREEN, 0, UserHandle.USER_CURRENT) == 1
+
     override fun start() {
         init()
     }
@@ -131,6 +147,7 @@ constructor(
         configurationController.removeCallback(configurationChangedListener)
         commandRegistry.unregisterCommand("auth-ripple")
 
+        mView.cancelUnlockedRipple()
         notificationShadeWindowController.setForcePluginOpen(false, this)
     }
 
@@ -179,14 +196,30 @@ constructor(
         }
     }
 
-    private fun showUnlockedRipple() {
+    private fun showUnlockedRipple(animation: Int = unlockAnimation) {
         if (!isRippleEnabled) return
         notificationShadeWindowController.setForcePluginOpen(true, this)
 
-        mView.startUnlockedRipple(
-            /* end runnable */
-            Runnable { notificationShadeWindowController.setForcePluginOpen(false, this) }
-        )
+        val onEnd = Runnable { notificationShadeWindowController.setForcePluginOpen(false, this) }
+        if (
+            animation == WaterRippleView.EFFECT_WATER ||
+                animation == WaterRippleView.EFFECT_WATERCOLOR
+        ) {
+            mView.startWaterUnlockedRipple(
+                onEnd,
+                animation,
+                highFrameRate = isUnlockEffectHfr,
+                fullscreen = isWaterRippleFullscreen,
+            )
+        } else if (GlowRippleShader.isGlowEffect(animation)) {
+            mView.startGlowUnlockedRipple(
+                onEnd,
+                rainbow = animation == GlowRippleShader.EFFECT_RAINBOW_GLOW,
+                highFrameRate = isUnlockEffectHfr,
+            )
+        } else {
+            mView.startUnlockedRipple(onEnd)
+        }
     }
 
     fun updateSensorLocation() {
@@ -407,6 +440,39 @@ constructor(
                         }
                     }
 
+                    "preview" -> {
+                        val style = args.getOrNull(1)?.toIntOrNull()
+                        val x = args.getOrNull(2)?.toIntOrNull()
+                        val y = args.getOrNull(3)?.toIntOrNull()
+                        if (
+                            (args.size != 2 && args.size != 4) ||
+                                style == null ||
+                                style !in 0..GlowRippleShader.EFFECT_RAINBOW_GLOW ||
+                                (args.size == 4 && (x == null || y == null))
+                        ) {
+                            invalidCommand(pw)
+                            return
+                        }
+                        if (SceneContainerFlag.isEnabled) {
+                            pw.println("preview is not supported with the scene container")
+                            return
+                        }
+                        updateSensorLocation()
+                        val location =
+                            if (x != null && y != null) {
+                                Point(x, y)
+                            } else {
+                                fingerprintSensorLocation
+                                    ?: Point(
+                                        displayMetrics.widthPixels / 2,
+                                        displayMetrics.heightPixels * 4 / 5,
+                                    )
+                            }
+                        mView.setSensorLocation(location)
+                        pw.println("preview style=$style sensorLocation=$location")
+                        showUnlockedRipple(style)
+                    }
+
                     else -> invalidCommand(pw)
                 }
             }
@@ -419,6 +485,8 @@ constructor(
             pw.println("  fingerprint")
             pw.println("  face")
             pw.println("  custom <x-location: int> <y-location: int>")
+            pw.println("  preview <style: 0..4> [x-location: int y-location: int]")
+            pw.println("    0=default, 1=water, 2=watercolor, 3=glow wave, 4=rainbow glow")
         }
 
         private fun invalidCommand(pw: PrintWriter) {

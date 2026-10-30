@@ -7245,6 +7245,27 @@ public final class Settings {
         public static final String ENABLE_RIPPLE_EFFECT = "enable_ripple_effect";
 
         /**
+         * Fingerprint unlock animation: 0 = platform ripple (default), 1 = water, 2 = watercolor,
+         * 3 = glow ripple wave, 4 = rainbow glow with micro particles.
+         * ENABLE_RIPPLE_EFFECT remains the master switch.
+         * @hide
+         */
+        public static final String LOCKSCREEN_UNLOCK_ANIMATION = "lockscreen_unlock_animation";
+
+        /**
+         * Animate custom unlock effects at the display cadence. Default is 0 (60 Hz).
+         * @hide
+         */
+        public static final String LOCKSCREEN_UNLOCK_EFFECT_HFR = "lockscreen_unlock_effect_hfr";
+
+        /**
+         * Let water waves cross the screen and dissipate beyond its edges. Default is 0.
+         * @hide
+         */
+        public static final String LOCKSCREEN_WATER_RIPPLE_FULLSCREEN =
+                "lockscreen_water_ripple_fullscreen";
+
+        /**
          * Whether to vibrate on succesful fingerprint authentication
          * @hide
          */

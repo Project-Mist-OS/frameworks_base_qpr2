@@ -24,16 +24,21 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Point
+import android.os.SystemClock
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import android.view.animation.PathInterpolator
+import android.widget.FrameLayout
 import com.android.app.animation.Interpolators
 import com.android.internal.graphics.ColorUtils
+import com.android.lunaris.waterripple.WaterRippleView
 import com.android.settingslib.Utils
 import com.android.systemui.surfaceeffects.core.dwellrippleeffect.DwellRippleShader
 import com.android.systemui.surfaceeffects.core.ripple.RippleShader
 
 private const val RIPPLE_SPARKLE_STRENGTH: Float = 0.3f
+private const val FULLSCREEN_WATER_DURATION: Long = 1400L
 
 /**
  * Handles two ripple effects: dwell ripple and unlocked ripple Dwell Ripple:
@@ -42,7 +47,7 @@ private const val RIPPLE_SPARKLE_STRENGTH: Float = 0.3f
  * - fadeDwellRipple: fades the dwell ripple away to alpha 0 Unlocked ripple:
  * - startUnlockedRipple: ripple expands from biometric auth location to the edges of the screen
  */
-class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, attrs) {
+class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(context, attrs) {
     private val retractInterpolator = PathInterpolator(.05f, .93f, .1f, 1f)
 
     private val dwellPulseDuration = 100L
@@ -50,6 +55,7 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
 
     private var drawDwell: Boolean = false
     private var drawRipple: Boolean = false
+    private var drawGlow: Boolean = false
 
     private var lockScreenColorVal = Color.WHITE
     private val fadeDuration = 83L
@@ -58,6 +64,10 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
     private val dwellPaint = Paint()
     private val rippleShader = RippleShader()
     private val ripplePaint = Paint()
+    private var glowShader: GlowRippleShader? = null
+    private val glowPaint = Paint()
+    private var waterRipple: WaterRippleView? = null
+    private var waterCompletion: Runnable? = null
     private var unlockedRippleAnimator: Animator? = null
     private var fadeDwellAnimator: Animator? = null
     private var retractDwellAnimator: Animator? = null
@@ -99,6 +109,7 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
         dwellShader.progress = 0f
         dwellShader.distortionStrength = .4f
         dwellPaint.shader = dwellShader
+        setWillNotDraw(false)
         visibility = GONE
     }
 
@@ -211,7 +222,11 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
 
     /** Plays a ripple animation that grows to the dwellRadius with distortion. */
     fun startDwellRipple(isDozing: Boolean) {
-        if (unlockedRippleAnimator?.isRunning == true || dwellPulseOutAnimator?.isRunning == true) {
+        if (
+            waterRipple != null ||
+                unlockedRippleAnimator?.isRunning == true ||
+                dwellPulseOutAnimator?.isRunning == true
+        ) {
             return
         }
 
@@ -268,7 +283,7 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
 
     /** Ripple that bursts outwards from the position of the sensor to the edges of the screen */
     fun startUnlockedRipple(onAnimationEnd: Runnable?) {
-        unlockedRippleAnimator?.cancel()
+        cancelUnlockedRipple()
 
         val rippleAnimator =
             ValueAnimator.ofFloat(0f, 1f).apply {
@@ -301,6 +316,148 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
                 )
             }
         unlockedRippleAnimator?.start()
+    }
+
+    /**
+     * Glow wave that bursts outwards from the position of the sensor to the edges of the screen.
+     * With [rainbow] the wave is colorful and leaves micro particles in its wake. Falls back to the
+     * default unlocked ripple when the glow can't be drawn.
+     */
+    fun startGlowUnlockedRipple(
+        onAnimationEnd: Runnable?,
+        rainbow: Boolean = false,
+        highFrameRate: Boolean = false,
+    ) {
+        cancelUnlockedRipple()
+
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            onAnimationEnd?.run()
+            return
+        }
+        if (!isHardwareAccelerated) {
+            startUnlockedRipple(onAnimationEnd)
+            return
+        }
+        val shader =
+            runCatching {
+                    (glowShader ?: GlowRippleShader().also { glowShader = it }).apply {
+                        setRainbow(rainbow)
+                        setProgress(0f)
+                    }
+                }
+                .onFailure {
+                    Log.w(AuthRippleController.TAG, "Unable to create unlock glow; using ripple", it)
+                }
+                .getOrNull()
+        if (shader == null) {
+            startUnlockedRipple(onAnimationEnd)
+            return
+        }
+
+        glowPaint.shader = shader
+        setRequestedFrameRate(if (highFrameRate) REQUESTED_FRAME_RATE_CATEGORY_HIGH else 60f)
+        var lastFrame = -1L
+        unlockedRippleAnimator =
+            ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = GlowRippleShader.DURATION_MS
+                interpolator = Interpolators.LINEAR
+                addUpdateListener { animator ->
+                    val frame = SystemClock.uptimeMillis() * 60L / 1000L
+                    if (highFrameRate || frame != lastFrame || animator.animatedFraction == 1f) {
+                        lastFrame = frame
+                        shader.setProgress(animator.animatedValue as Float)
+                        invalidate()
+                    }
+                }
+                addListener(
+                    object : AnimatorListenerAdapter() {
+                        override fun onAnimationStart(animation: Animator) {
+                            drawGlow = true
+                            visibility = VISIBLE
+                        }
+
+                        override fun onAnimationEnd(animation: Animator) {
+                            onAnimationEnd?.run()
+                            finishGlow()
+                            unlockedRippleAnimator = null
+                        }
+                    }
+                )
+            }
+        unlockedRippleAnimator?.start()
+    }
+
+    /**
+     * Water or watercolor effect that plays over the screen contents from the position of the
+     * sensor. [animation] is [WaterRippleView.EFFECT_WATER] or [WaterRippleView.EFFECT_WATERCOLOR];
+     * with [fullscreen] the water waves fill the screen and bounce off its edges. Falls back to the
+     * default unlocked ripple when the effect can't be drawn.
+     */
+    fun startWaterUnlockedRipple(
+        onAnimationEnd: Runnable?,
+        animation: Int = WaterRippleView.EFFECT_WATER,
+        highFrameRate: Boolean = false,
+        fullscreen: Boolean = false,
+    ) {
+        cancelUnlockedRipple()
+        waterCompletion = onAnimationEnd
+        visibility = VISIBLE
+        val effect = WaterRippleView(context)
+        waterRipple = effect
+        addView(effect, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        effect.playUnlock(
+            origin.x.toFloat(),
+            origin.y.toFloat(),
+            if (fullscreen && animation == WaterRippleView.EFFECT_WATER) {
+                FULLSCREEN_WATER_DURATION
+            } else {
+                AuthRippleController.RIPPLE_ANIMATION_DURATION
+            },
+            animation,
+            highFrameRate,
+            fullscreen,
+            { finishWaterRipple() },
+            {
+                // The effect could not be set up, use the default ripple instead.
+                removeWaterRipple()
+                val completion = waterCompletion
+                waterCompletion = null
+                startUnlockedRipple(completion)
+            },
+        )
+    }
+
+    /** Stops a running unlocked ripple, glow or water effect, running its completion callback. */
+    fun cancelUnlockedRipple() {
+        unlockedRippleAnimator?.cancel()
+        if (waterRipple != null) finishWaterRipple()
+    }
+
+    private fun removeWaterRipple() {
+        val effect = waterRipple ?: return
+        waterRipple = null
+        effect.cancel()
+        removeView(effect)
+    }
+
+    private fun finishWaterRipple() {
+        removeWaterRipple()
+        visibility = GONE
+        val completion = waterCompletion
+        waterCompletion = null
+        completion?.run()
+    }
+
+    private fun finishGlow() {
+        if (drawGlow) setRequestedFrameRate(REQUESTED_FRAME_RATE_CATEGORY_DEFAULT)
+        drawGlow = false
+        glowPaint.shader = null
+        visibility = GONE
+    }
+
+    override fun onDetachedFromWindow() {
+        cancelUnlockedRipple()
+        super.onDetachedFromWindow()
     }
 
     fun setLockScreenColor(color: Int) {
@@ -360,6 +517,17 @@ class AuthRippleView(context: Context?, attrs: AttributeSet?) : View(context, at
                 rippleShader.rippleSize.currentWidth,
                 ripplePaint,
             )
+        }
+
+        if (drawGlow && canvas.isHardwareAccelerated) {
+            glowShader?.setGeometry(
+                width,
+                height,
+                origin.x.toFloat(),
+                origin.y.toFloat(),
+                resources.displayMetrics.density,
+            )
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), glowPaint)
         }
     }
 }

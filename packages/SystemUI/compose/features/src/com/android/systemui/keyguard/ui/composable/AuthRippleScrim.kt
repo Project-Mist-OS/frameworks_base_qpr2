@@ -21,12 +21,21 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
+import com.android.lunaris.waterripple.WaterRippleView
+import com.android.systemui.biometrics.GlowRippleShader
 import com.android.systemui.deviceentry.domain.interactor.AuthRippleInteractor.DwellRipplePhase
 import com.android.systemui.keyguard.ui.viewmodel.AuthRippleScrimViewModel
 import com.android.systemui.keyguard.ui.viewmodel.AuthRippleScrimViewModel.Companion.DWELL_FADE_OUT_DURATION_MS
+import com.android.systemui.keyguard.ui.viewmodel.AuthRippleScrimViewModel.Companion.FULLSCREEN_WATER_DURATION_MS
+import com.android.systemui.keyguard.ui.viewmodel.AuthRippleScrimViewModel.Companion.RIPPLE_ANIMATION_DURATION_MS
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.surfaceeffects.compose.dwellRippleEffect
 import com.android.systemui.surfaceeffects.compose.rippleCircleEffect
@@ -82,6 +91,48 @@ private fun DwellEffect(viewModel: AuthRippleScrimViewModel, modifier: Modifier 
 @Composable
 private fun UnlockRippleEffect(viewModel: AuthRippleScrimViewModel, modifier: Modifier = Modifier) {
     val isEnabled = viewModel.showUnlockRipple
+    val animation = viewModel.unlockAnimation
+    val effectOrigin = viewModel.unlockOrigin
+    val isWater =
+        animation == WaterRippleView.EFFECT_WATER || animation == WaterRippleView.EFFECT_WATERCOLOR
+
+    // The water effects can fail to set up, in which case the default ripple is played instead.
+    var waterFailed by remember { mutableStateOf(false) }
+    LaunchedEffect(isEnabled) {
+        if (!isEnabled) waterFailed = false
+    }
+
+    if (isWater && !waterFailed && effectOrigin != null) {
+        val fullscreen = viewModel.isWaterRippleFullscreen
+        WaterUnlockEffect(
+            origin = Offset(effectOrigin.x, effectOrigin.y),
+            animation = animation,
+            isEnabled = isEnabled,
+            highFrameRate = viewModel.isUnlockEffectHfr,
+            fullscreen = fullscreen,
+            durationMs =
+                if (fullscreen && animation == WaterRippleView.EFFECT_WATER) {
+                    FULLSCREEN_WATER_DURATION_MS
+                } else {
+                    RIPPLE_ANIMATION_DURATION_MS
+                },
+            onAnimationFinished = { viewModel.finishShowingUnlockRipple() },
+            onAnimationFailed = { waterFailed = true },
+            modifier = modifier,
+        )
+        return
+    }
+    if (GlowRippleShader.isGlowEffect(animation) && effectOrigin != null) {
+        GlowUnlockEffect(
+            origin = Offset(effectOrigin.x, effectOrigin.y),
+            isEnabled = isEnabled,
+            rainbow = animation == GlowRippleShader.EFFECT_RAINBOW_GLOW,
+            highFrameRate = viewModel.isUnlockEffectHfr,
+            onAnimationFinished = { viewModel.finishShowingUnlockRipple() },
+            modifier = modifier,
+        )
+        return
+    }
     viewModel.unlockRippleConfig?.let {
         Box(
             modifier

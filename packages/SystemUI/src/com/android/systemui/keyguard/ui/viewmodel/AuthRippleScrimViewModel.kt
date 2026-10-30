@@ -19,6 +19,7 @@ package com.android.systemui.keyguard.ui.viewmodel
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PointF
+import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -34,6 +35,7 @@ import com.android.systemui.deviceentry.domain.interactor.AuthRippleInteractor.D
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.lifecycle.HydratedActivatable
 import com.android.systemui.res.R
+import com.android.systemui.shared.settings.data.repository.SystemSettingsRepository
 import com.android.systemui.surfaceeffects.core.dwellrippleeffect.AnimationConfig
 import com.android.systemui.surfaceeffects.core.dwellrippleeffect.DwellEffectConfig
 import com.android.systemui.surfaceeffects.core.ripple.RippleAnimationConfig
@@ -51,7 +53,30 @@ constructor(
     @Main private val sysuiContext: Context,
     private val authRippleInteractor: AuthRippleInteractor,
     keyguardInteractor: KeyguardInteractor,
+    systemSettingsRepository: SystemSettingsRepository,
 ) : HydratedActivatable() {
+    /**
+     * The selected fingerprint unlock animation, see
+     * [Settings.System.LOCKSCREEN_UNLOCK_ANIMATION]. Anything but a glow effect uses the default
+     * unlock ripple.
+     */
+    val unlockAnimation: Int by
+        systemSettingsRepository
+            .intSetting(Settings.System.LOCKSCREEN_UNLOCK_ANIMATION, defaultValue = 0)
+            .hydratedStateOf(initialValue = 0)
+
+    /** Whether custom unlock effects should animate at the display refresh rate. */
+    val isUnlockEffectHfr: Boolean by
+        systemSettingsRepository
+            .boolSetting(Settings.System.LOCKSCREEN_UNLOCK_EFFECT_HFR, defaultValue = false)
+            .hydratedStateOf(initialValue = false)
+
+    /** Whether the water effect should fill the screen and bounce off its edges. */
+    val isWaterRippleFullscreen: Boolean by
+        systemSettingsRepository
+            .boolSetting(Settings.System.LOCKSCREEN_WATER_RIPPLE_FULLSCREEN, defaultValue = false)
+            .hydratedStateOf(initialValue = false)
+
     private val color =
         keyguardInteractor.isDozing.map { isDozing ->
             val color =
@@ -64,6 +89,9 @@ constructor(
         }
 
     private val unlockRippleOrigin = authRippleInteractor.sensorOrigin
+
+    /** The location, in pixels, the unlock ripple expands from. */
+    val unlockOrigin: PointF? by unlockRippleOrigin.hydratedStateOf(initialValue = null)
 
     /**
      * Whether to show an unlock ripple animation.
@@ -158,6 +186,9 @@ constructor(
         const val DWELL_FADE_OUT_DURATION_MS = 83L
 
         const val RIPPLE_ANIMATION_DURATION_MS: Long = 800
+
+        /** Duration of the water effect when it fills the whole screen. */
+        const val FULLSCREEN_WATER_DURATION_MS: Long = 1400
 
         private const val DWELL_PULSE_TIME_FRACTION =
             (DWELL_PULSE_DURATION_MS.toFloat()) /
