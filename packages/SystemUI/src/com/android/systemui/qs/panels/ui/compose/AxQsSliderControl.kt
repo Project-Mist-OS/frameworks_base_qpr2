@@ -68,8 +68,10 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -448,6 +450,67 @@ internal fun AxQsSliderPreview(
     }
 }
 
+/**
+ * Calls [onHold] when a pointer is held down in place for the long press timeout. The touch is not
+ * consumed before that, so the slider underneath keeps working for taps and drags. Once the hold
+ * fires, the rest of the gesture is swallowed so releasing does not move the slider.
+ */
+@Composable
+private fun Modifier.axQsHoldToExpand(onHold: () -> Unit): Modifier {
+    val currentOnHold by rememberUpdatedState(onHold)
+    val haptic = LocalHapticFeedback.current
+    return pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            // withTimeoutOrNull returns null when the pointer stayed down in place until the timeout.
+            val abortedEarly =
+                withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                    var aborted = false
+                    while (!aborted) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        aborted =
+                            change == null ||
+                                !change.pressed ||
+                                (change.position - down.position).getDistance() >
+                                    viewConfiguration.touchSlop
+                    }
+                    true
+                }
+            if (abortedEarly == null) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                currentOnHold()
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    event.changes.forEach { it.consume() }
+                } while (event.changes.any { it.pressed })
+            }
+        }
+    }
+}
+
+/** A large version of the brightness slider, using the same style as the QS slider. */
+@Composable
+internal fun AxQsExtendedBrightnessSlider(
+    verticalStyle: AxQsVerticalSliderStyle,
+    viewModel: BrightnessSliderViewModel,
+    modifier: Modifier = Modifier,
+) {
+    AxQsSliderControl(vertical = true, interceptParentScroll = false, modifier = modifier) {
+        sliderHeight,
+        verticalSlider ->
+        AxBrightnessSlider(
+            viewModel = viewModel,
+            sliderHeight = sliderHeight,
+            vertical = verticalSlider,
+            verticalStyle = verticalStyle,
+            // The extended panel has its own surface, so don't show the shade brightness mirror.
+            reportDragState = false,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
 @Composable
 internal fun AxQsBrightnessControl(
     vertical: Boolean,
@@ -457,12 +520,20 @@ internal fun AxQsBrightnessControl(
     modifier: Modifier = Modifier,
 ) {
     var dragging by remember(vertical) { mutableStateOf(false) }
+    var showExtended by remember { mutableStateOf(false) }
     val mirrorInOverlay = dragging && viewModel.showMirror
+    if (showExtended) {
+        AxExtendedBrightnessPopup(
+            viewModel = viewModel,
+            verticalStyle = verticalStyle,
+            onDismiss = { showExtended = false },
+        )
+    }
     AxQsSliderControl(
         vertical = vertical,
         mirrorInOverlay = mirrorInOverlay,
         entranceProgress = entranceProgress,
-        modifier = modifier,
+        modifier = modifier.axQsHoldToExpand { showExtended = true },
     ) { sliderHeight, verticalSlider ->
         AxBrightnessSlider(
             viewModel = viewModel,
@@ -484,6 +555,7 @@ private fun AxBrightnessSlider(
     verticalStyle: AxQsVerticalSliderStyle,
     interactive: Boolean = true,
     mirrorInOverlay: Boolean = false,
+    reportDragState: Boolean = true,
     onDraggingChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -563,7 +635,7 @@ private fun AxBrightnessSlider(
     DisposableEffect(viewModel) {
         onDispose {
             if (currentDragging) {
-                viewModel.setIsDragging(false)
+                if (reportDragState) viewModel.setIsDragging(false)
                 currentOnDraggingChanged(false)
             }
         }
@@ -585,7 +657,7 @@ private fun AxBrightnessSlider(
                 value = newValue.toInt()
                 if (!dragging) {
                     dragging = true
-                    viewModel.setIsDragging(true)
+                    if (reportDragState) viewModel.setIsDragging(true)
                     onDraggingChanged(true)
                 }
                 coroutineScope.launch { viewModel.onDrag(Drag.Dragging(GammaBrightness(value))) }
@@ -598,7 +670,7 @@ private fun AxBrightnessSlider(
             }
             if (dragging) {
                 dragging = false
-                viewModel.setIsDragging(false)
+                if (reportDragState) viewModel.setIsDragging(false)
                 onDraggingChanged(false)
             }
         },
