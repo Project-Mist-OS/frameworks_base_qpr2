@@ -261,12 +261,19 @@ private fun AxQsSlider(
     icon: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Glass sliders sit on the blurred extended brightness backdrop: a translucent track with a
+    // light (dark in light mode) fill, like the surrounding content.
+    val glass = LocalAxQsGlassTrack.current
     val inactiveTrackColor =
-        if (LocalAxQsGlassTrack.current) {
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+        if (glass) {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
         } else {
             AxTileDefaults.backgroundColor()
         }
+    val activeColor =
+        if (glass) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+    val onActiveColor =
+        if (glass) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onPrimary
     // Optional image shown instead of the primary color on the filled part. `vertical` means the
     // slider is rotated, so the brush counter-rotates to keep the image upright.
     val imageBrush =
@@ -274,7 +281,7 @@ private fun AxQsSlider(
         else null
     // The theme's onPrimary is dark in dark mode and unreadable on the image.
     val indicatorContentColor =
-        if (imageBrush != null) axQsActiveContentColor() else MaterialTheme.colorScheme.onPrimary
+        if (imageBrush != null) axQsActiveContentColor() else onActiveColor
     val sliderScale = if (vertical) sliderHeight / AxSliderTrackHeight else 1f
     val iconSize = if (vertical) AxSliderIconSize * sliderScale else HorizontalSliderIconSize
     if (vertical && verticalStyle == AxQsVerticalSliderStyle.PLATFORM) {
@@ -306,13 +313,13 @@ private fun AxQsSlider(
                 colors =
                     PlatformSliderColors(
                         trackColor = platformTrackColor,
-                        indicatorColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = activeColor,
                         iconColor = indicatorContentColor,
                         labelColorOnIndicator = indicatorContentColor,
                         labelColorOnTrack = MaterialTheme.colorScheme.onSurface,
                         disabledTrackColor = platformTrackColor.copy(alpha = 0.38f),
                         disabledIndicatorColor =
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+                            activeColor.copy(alpha = 0.38f),
                         disabledIconColor =
                             MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                         disabledLabelColor =
@@ -329,16 +336,16 @@ private fun AxQsSlider(
     }
     val colors =
         SliderDefaults.colors(
-            thumbColor = MaterialTheme.colorScheme.primary,
+            thumbColor = activeColor,
             // With an image the filled part is drawn by AxQsImageActiveTrack instead.
             activeTrackColor =
-                if (imageBrush != null) Color.Transparent else MaterialTheme.colorScheme.primary,
+                if (imageBrush != null) Color.Transparent else activeColor,
             activeTickColor = indicatorContentColor,
             inactiveTrackColor = inactiveTrackColor,
             inactiveTickColor = MaterialTheme.colorScheme.onSurface,
             disabledThumbColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-            disabledActiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
-            disabledActiveTickColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.38f),
+            disabledActiveTrackColor = activeColor.copy(alpha = 0.38f),
+            disabledActiveTickColor = onActiveColor.copy(alpha = 0.38f),
             disabledInactiveTrackColor = inactiveTrackColor.copy(alpha = 0.38f),
             disabledInactiveTickColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
         )
