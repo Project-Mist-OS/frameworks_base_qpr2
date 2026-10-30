@@ -189,14 +189,16 @@ constructor(
         shelfSpace: Float,
         shelfHeight: Float,
     ): Int {
+        val spaceForNotifications = stack.getLockscreenNotificationAvailableHeight(notifSpace)
+        val spaceForShelf = if (stack.areLockscreenNotificationsBottomAnchored()) 0f else shelfSpace
         log { "\n " }
         log {
             "computeMaxKeyguardNotifications ---" +
-                "\n\tnotifSpace $notifSpace" +
-                "\n\tspaceForShelf $shelfSpace" +
+                "\n\tnotifSpace $spaceForNotifications" +
+                "\n\tspaceForShelf $spaceForShelf" +
                 "\n\tshelfIntrinsicHeight $shelfHeight"
         }
-        if (notifSpace + shelfSpace <= 0f) {
+        if (spaceForNotifications + spaceForShelf <= 0f) {
             log { "--- No space to show anything. maxNotifs=0" }
             return 0
         }
@@ -217,8 +219,8 @@ constructor(
                 allowedByPolicy(heightResult) &&
                     canStackFitInSpace(
                         heightResult,
-                        notifSpace = notifSpace,
-                        shelfSpace = shelfSpace,
+                        notifSpace = spaceForNotifications,
+                        shelfSpace = spaceForShelf,
                     ) == FitResult.FIT
             }
 
@@ -247,8 +249,8 @@ constructor(
                     allowedByPolicy(heightResult) &&
                         canStackFitInSpace(
                             heightResult,
-                            notifSpace = notifSpace,
-                            shelfSpace = shelfSpace,
+                            notifSpace = spaceForNotifications,
+                            shelfSpace = spaceForShelf,
                         ) != FitResult.NO_FIT
                 }
             log { "\t--- maxNotifications=$maxNotifications" }

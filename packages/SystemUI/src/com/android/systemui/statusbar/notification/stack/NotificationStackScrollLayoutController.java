@@ -122,6 +122,7 @@ import com.android.systemui.statusbar.notification.row.NotificationGuts;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.notification.row.NotificationSnooze;
 import com.android.systemui.statusbar.notification.shared.GroupHunAnimationFix;
+import com.android.systemui.statusbar.notification.shared.NotificationMinimalism;
 import com.android.systemui.statusbar.notification.shared.NsslTouchDispatchFix;
 import com.android.systemui.statusbar.notification.stack.ui.viewbinder.NotificationListViewBinder;
 import com.android.systemui.statusbar.phone.HeadsUpAppearanceController;
@@ -154,6 +155,8 @@ public class NotificationStackScrollLayoutController implements Dumpable {
     private static final String TAG = "StackScrollerController";
     private static final boolean DEBUG = Log.isLoggable(TAG, Log.DEBUG);
     private static final String HIGH_PRIORITY = "high_priority";
+    private static final String LOCKSCREEN_NOTIFICATION_ANCHOR_POSITION =
+            "system:" + Settings.System.LOCK_SCREEN_NOTIFICATIONS_ANCHOR_POSITION;
     /** Delay in milli-seconds before shade closes for clear all. */
     private static final int DELAY_BEFORE_SHADE_CLOSE = 200;
 
@@ -217,6 +220,24 @@ public class NotificationStackScrollLayoutController implements Dumpable {
             mSensitiveNotificationProtectionController;
 
     private View mLongPressedView;
+    private boolean mStackedNotificationsEnabled;
+    private boolean mCompactNotificationsEnabled = true;
+
+    private final TunerService.Tunable mLockscreenStackTunable = (key, value) -> {
+        if (Settings.Secure.LOCK_SCREEN_STACKED_NOTIFICATIONS.equals(key)) {
+            mStackedNotificationsEnabled = TunerService.parseIntegerSwitch(value, false);
+        } else if (Settings.Secure.LOCK_SCREEN_NOTIFICATION_MINIMALISM.equals(key)) {
+            mCompactNotificationsEnabled = TunerService.parseIntegerSwitch(value, true);
+        } else if (Settings.Secure.LOCK_SCREEN_NOTIFICATIONS_BOTTOM_ANCHORED.equals(key)) {
+            mView.setLockscreenNotificationsBottomAnchored(
+                    TunerService.parseIntegerSwitch(value, false));
+        } else if (LOCKSCREEN_NOTIFICATION_ANCHOR_POSITION.equals(key)) {
+            mView.setLockscreenNotificationAnchorPosition(TunerService.parseInteger(value,
+                    LockscreenNotificationStack.DEFAULT_ANCHOR_POSITION));
+        }
+        mView.setLockscreenNotificationStackEnabled(mStackedNotificationsEnabled
+                && !(NotificationMinimalism.isEnabled() && mCompactNotificationsEnabled));
+    };
 
     private final NotificationListContainerImpl mNotificationListContainer =
             new NotificationListContainerImpl();
@@ -228,6 +249,11 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                 public void onViewAttachedToWindow(View v) {
                     mColorUpdateLogger.logTriggerEvent("NSSLC.onViewAttachedToWindow()");
                     mConfigurationController.addCallback(mConfigurationListener);
+                    mTunerService.addTunable(mLockscreenStackTunable,
+                            Settings.Secure.LOCK_SCREEN_NOTIFICATION_MINIMALISM,
+                            Settings.Secure.LOCK_SCREEN_STACKED_NOTIFICATIONS,
+                            Settings.Secure.LOCK_SCREEN_NOTIFICATIONS_BOTTOM_ANCHORED,
+                            LOCKSCREEN_NOTIFICATION_ANCHOR_POSITION);
                     final int newBarState = mStatusBarStateController.getState();
                     if (newBarState != mBarState) {
                         mStateListener.onStateChanged(newBarState);
@@ -242,6 +268,8 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                     mColorUpdateLogger.logTriggerEvent("NSSLC.onViewDetachedFromWindow()");
                     mConfigurationController.removeCallback(mConfigurationListener);
                     mStatusBarStateController.removeCallback(mStateListener);
+                    mTunerService.removeTunable(mLockscreenStackTunable);
+                    mView.resetLockscreenNotificationStack();
                 }
             };
 
@@ -374,6 +402,7 @@ public class NotificationStackScrollLayoutController implements Dumpable {
     private final UserChangedListener mLockscreenUserChangeListener = new UserChangedListener() {
         @Override
         public void onUserChanged(int userId) {
+            mView.resetLockscreenNotificationStack();
             updateSensitivenessWithAnimation(false);
             mHistoryEnabled = null;
         }
@@ -1030,6 +1059,10 @@ public class NotificationStackScrollLayoutController implements Dumpable {
                 (changedRow, expanded) -> mView.onGroupExpandChanged(changedRow, expanded));
 
         mViewBinder.bindWhileAttached(mView, this);
+    }
+
+    boolean isFalseStackTap() {
+        return mFalsingManager.isFalseTap(FalsingManager.LOW_PENALTY);
     }
 
     public void setApplyHunTranslation(boolean apply) {

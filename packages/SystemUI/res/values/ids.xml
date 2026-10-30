@@ -329,4 +329,12 @@
     <item type="id" name="bc_smartspace_view" />
     <item type="id" name="smartspace_card_pager" />
     <item type="id" name="smartspace_page_indicator" />
+
+    <!-- Lockscreen notification stack -->
+    <item type="id" name="lockscreen_stack_content_alpha_animator_tag" />
+    <item type="id" name="lockscreen_stack_content_alpha_start_tag" />
+    <item type="id" name="lockscreen_stack_content_alpha_end_tag" />
+    <item type="id" name="lockscreen_stack_roundness_animator_tag" />
+    <item type="id" name="lockscreen_stack_roundness_start_tag" />
+    <item type="id" name="lockscreen_stack_roundness_end_tag" />
 </resources>

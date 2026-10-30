@@ -1,0 +1,301 @@
+/*
+ * Copyright (C) 2024-2026 Lunaris AOSP
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.android.systemui.statusbar.notification.stack;
+
+import android.content.res.Resources;
+import android.util.MathUtils;
+
+import com.android.systemui.res.R;
+import com.android.systemui.scene.shared.flag.SceneContainerFlag;
+import com.android.systemui.statusbar.NotificationShelf;
+import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
+import com.android.systemui.statusbar.notification.row.ExpandableView;
+
+import java.util.ArrayList;
+
+class LockscreenNotificationStack {
+    static final int DEFAULT_ANCHOR_POSITION = 88;
+    private static final int MIN_ANCHOR_POSITION = 10;
+    private static final int MAX_ANCHOR_POSITION = 100;
+    private static final int VISIBLE_CARDS = 3;
+    private static final float SCALE_STEP = 0.04f;
+    private static final float ALPHA_STEP = 0.08f;
+
+    private final ArrayList<ExpandableNotificationRow> mRows = new ArrayList<>();
+    private float mPeek;
+    private float mElevation;
+    private float mBottomPadding;
+    private float mAdditionalGap;
+    private int mAnchorPosition = DEFAULT_ANCHOR_POSITION;
+    private float mAnchorBottom = -1f;
+    private float mBottom;
+    private boolean mEnabled;
+    private boolean mBottomAnchored;
+    private boolean mExpanded;
+    private boolean mApplied;
+
+    LockscreenNotificationStack(Resources resources) {
+        updateResources(resources);
+    }
+
+    void updateResources(Resources resources) {
+        mPeek = resources.getDimension(R.dimen.lockscreen_notification_stack_peek);
+        mElevation = resources.getDimension(R.dimen.lockscreen_notification_stack_elevation);
+        mBottomPadding = resources.getDimension(R.dimen.lockscreen_notification_bottom_padding);
+        mAdditionalGap = resources.getDimension(R.dimen.lockscreen_notification_stack_list_gap);
+    }
+
+    boolean setEnabled(boolean enabled) {
+        if (mEnabled == enabled) {
+            return false;
+        }
+        mEnabled = enabled;
+        reset();
+        return true;
+    }
+
+    boolean setAnchorPosition(int position) {
+        position = Math.max(MIN_ANCHOR_POSITION, Math.min(MAX_ANCHOR_POSITION, position));
+        if (mAnchorPosition == position) {
+            return false;
+        }
+        mAnchorPosition = position;
+        return true;
+    }
+
+    boolean setBottomAnchored(boolean bottomAnchored) {
+        if (mBottomAnchored == bottomAnchored) {
+            return false;
+        }
+        mBottomAnchored = bottomAnchored;
+        return true;
+    }
+
+    boolean isBottomAnchored() {
+        return mBottomAnchored;
+    }
+
+    float getAvailableHeight(float defaultHeight, float screenHeight, float viewTop,
+            float stackTop, float bottomInset) {
+        if (!mBottomAnchored || screenHeight <= 0f) {
+            mAnchorBottom = -1f;
+            return defaultHeight;
+        }
+        // Like Now Playing, measure from the top of the full screen, independently of UDFPS.
+        // At the lowest positions, leave room for the navigation area and screen edge.
+        final float screenBottom = Math.min(screenHeight * mAnchorPosition / 100f,
+                screenHeight - bottomInset - mBottomPadding);
+        mAnchorBottom = Math.max(stackTop, screenBottom - viewTop);
+        return mAnchorBottom - stackTop;
+    }
+
+    float getBottom() {
+        return mBottom;
+    }
+
+    boolean isEnabled() {
+        return mEnabled;
+    }
+
+    boolean isExpanded() {
+        return mExpanded;
+    }
+
+    boolean isApplied() {
+        return mApplied;
+    }
+
+    boolean setExpanded(boolean expanded) {
+        if (mExpanded == expanded || (expanded && !mApplied)) {
+            return false;
+        }
+        mExpanded = expanded;
+        return true;
+    }
+
+    void reset() {
+        mExpanded = false;
+        mApplied = false;
+        mBottom = 0f;
+        mRows.clear();
+    }
+
+    private boolean isOnLockscreen(AmbientState ambientState) {
+        return SceneContainerFlag.isEnabled()
+                ? ambientState.isShowingStackOnLockscreen() : ambientState.isOnKeyguard();
+    }
+
+    void apply(StackScrollAlgorithm.StackScrollAlgorithmState algorithmState,
+            AmbientState ambientState) {
+        mApplied = false;
+        mBottom = 0f;
+        mRows.clear();
+        if ((!mEnabled && !mBottomAnchored) || !isOnLockscreen(ambientState) || ambientState.isPulsing()
+                || ambientState.isPulseExpanding()) {
+            mExpanded = false;
+            return;
+        }
+        if (ambientState.getDozeAmount() == 1f) {
+            mExpanded = false;
+        }
+
+        final float amount = (1f - MathUtils.saturate(ambientState.getFractionToShade()))
+                * (1f - MathUtils.saturate(ambientState.getDozeAmount()));
+        if (amount == 0f) {
+            return;
+        }
+
+        boolean hasExpandedGroup = false;
+        for (ExpandableView child : algorithmState.visibleChildren) {
+            ExpandableViewState state = child.getViewState();
+            if (state.gone || state.hidden || state.inShelf || state.getAlpha() == 0f) {
+                continue;
+            }
+            if (!(child instanceof ExpandableNotificationRow row)) {
+                if (!mRows.isEmpty()) {
+                    return;
+                }
+                continue;
+            }
+            if (row.isHeadsUpState() || row.isHeadsUpAnimatingAway() || row.showingPulsing()
+                    || row.isExpandAnimationRunning() || row.hasExpandingChild()
+                    || row.areGutsExposed() || row.isUserSwipingToExpandRow()) {
+                return;
+            }
+            hasExpandedGroup |= row.areChildrenExpanded();
+            mRows.add(row);
+        }
+
+        if (mEnabled && hasExpandedGroup) {
+            mExpanded = true;
+        }
+        if (mRows.size() < 2) {
+            mExpanded = false;
+        }
+        NotificationShelf shelf = ambientState.getShelf();
+        ExpandableViewState shelfState = shelf != null ? shelf.getViewState() : null;
+        final boolean showShelf = shelfState != null && !shelfState.hidden;
+        if (mRows.isEmpty()) {
+            if (mBottomAnchored && showShelf) {
+                final float naturalBottom = shelfState.getYTranslation() + shelfState.height;
+                final float bottom = calculateBottom(naturalBottom);
+                mBottom = MathUtils.lerp(naturalBottom, bottom, amount);
+                updateShelf(algorithmState, shelfState, true, naturalBottom, bottom, amount);
+            }
+            return;
+        }
+
+        ExpandableViewState firstState = mRows.get(0).getViewState();
+        ExpandableViewState lastState = mRows.get(mRows.size() - 1).getViewState();
+        final float listTop = firstState.getYTranslation();
+        final float listBottom = lastState.getYTranslation() + lastState.height;
+        final int height = firstState.height;
+        final float naturalBottom = showShelf
+                ? shelfState.getYTranslation() + shelfState.height : listBottom;
+
+        float bottom = calculateBottom(naturalBottom);
+        final float preferredShelfGap = mEnabled ? mPeek
+                : (showShelf ? Math.max(0f, shelfState.getYTranslation() - listBottom) : 0f);
+        final float shelfGap = showShelf
+                ? Math.min(preferredShelfGap,
+                        Math.max(0f, bottom - shelfState.height - listBottom)) : 0f;
+        final float shelfHeight = showShelf ? shelfState.height + shelfGap : 0f;
+        final float cardsBottom = bottom - shelfHeight;
+        if (height <= 0 || cardsBottom < listTop + height) {
+            return;
+        }
+
+        final boolean collapsed = mEnabled && !mExpanded && mRows.size() > 1;
+        final int peekingCards = Math.min(mRows.size() - 1, VISIBLE_CARDS - 1);
+        final float peek = peekingCards == 0 ? 0f
+                : Math.min(mPeek, (cardsBottom - listTop - height) / peekingCards);
+        final float deckTop = mBottomAnchored
+                ? cardsBottom - height - peekingCards * peek : listTop;
+        if (collapsed && !mBottomAnchored) {
+            bottom = deckTop + height + peekingCards * peek + shelfHeight;
+        }
+        final float extraGap = mEnabled && mBottomAnchored && mRows.size() > 1
+                ? Math.min(mAdditionalGap,
+                        Math.max(0f, cardsBottom - listBottom) / (mRows.size() - 1)) : 0f;
+        final float listOffset = mBottomAnchored ? Math.max(0f,
+                cardsBottom - listBottom - extraGap * (mRows.size() - 1)) : 0f;
+        mApplied = collapsed;
+        mBottom = MathUtils.lerp(naturalBottom, bottom, amount);
+
+        for (int i = 0; i < mRows.size(); i++) {
+            ExpandableViewState state = mRows.get(i).getViewState();
+            final int depth = Math.min(i, VISIBLE_CARDS - 1);
+            final float targetY = collapsed ? deckTop + depth * peek
+                    : state.getYTranslation() + listOffset + i * extraGap;
+            state.setYTranslation(MathUtils.lerp(state.getYTranslation(), targetY,
+                    amount));
+            if (mEnabled) {
+                state.lockscreenStackRoundness = amount;
+            }
+            if (!collapsed) {
+                continue;
+            }
+            state.height = Math.round(MathUtils.lerp(state.height, height, amount));
+            state.setScaleX(MathUtils.lerp(1f, 1f - depth * SCALE_STEP, amount));
+            state.lockscreenStackScaleApplied = true;
+            state.setZTranslation(MathUtils.lerp(state.getZTranslation(),
+                    ambientState.getBaseZHeight() + (VISIBLE_CARDS - depth) * mElevation, amount));
+            state.lockscreenStackIndex = amount == 1f ? i : -1;
+            if (i > 0) {
+                state.lockscreenStackContentAlpha = 1f - amount;
+                if (amount == 1f) {
+                    state.location = i < VISIBLE_CARDS
+                            ? ExpandableViewState.LOCATION_BOTTOM_STACK_PEEKING
+                            : ExpandableViewState.LOCATION_BOTTOM_STACK_HIDDEN;
+                }
+            }
+            if (i >= VISIBLE_CARDS) {
+                state.setAlpha(state.getAlpha() * (1f - amount));
+                state.hidden = amount == 1f;
+            } else {
+                state.setAlpha(state.getAlpha() * (1f - depth * ALPHA_STEP * amount));
+            }
+        }
+
+        updateShelf(algorithmState, shelfState, showShelf, naturalBottom, bottom, amount);
+    }
+
+    private float calculateBottom(float naturalBottom) {
+        if (!mBottomAnchored || mAnchorBottom < 0f) {
+            return naturalBottom;
+        }
+        return Math.max(naturalBottom, mAnchorBottom);
+    }
+
+    private void updateShelf(StackScrollAlgorithm.StackScrollAlgorithmState algorithmState,
+            ExpandableViewState shelfState, boolean showShelf, float naturalBottom,
+            float bottom, float amount) {
+        if (shelfState != null) {
+            final float shelfY = shelfState.getYTranslation();
+            final float targetShelfY = showShelf
+                    ? bottom - shelfState.height : shelfY + bottom - naturalBottom;
+            final float newShelfY = MathUtils.lerp(shelfY, targetShelfY, amount);
+            shelfState.setYTranslation(newShelfY);
+            for (ExpandableView child : algorithmState.visibleChildren) {
+                ExpandableViewState state = child.getViewState();
+                if (state.inShelf) {
+                    state.setYTranslation(state.getYTranslation() + newShelfY - shelfY);
+                }
+            }
+        }
+    }
+}

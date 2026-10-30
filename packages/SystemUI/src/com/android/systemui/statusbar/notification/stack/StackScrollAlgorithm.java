@@ -58,6 +58,7 @@ public class StackScrollAlgorithm {
     private static final String TAG = "StackScrollAlgorithm";
     private static final SourceType STACK_SCROLL_ALGO = SourceType.from("StackScrollAlgorithm");
     private final ViewGroup mHostView;
+    private final LockscreenNotificationStack mLockscreenNotificationStack;
     private final HeadsUpAnimator mHeadsUpAnimator;
 
     private float mPaddingBetweenElements;
@@ -91,12 +92,18 @@ public class StackScrollAlgorithm {
             ViewGroup hostView,
             HeadsUpAnimator headsUpAnimator) {
         mHostView = hostView;
+        mLockscreenNotificationStack = new LockscreenNotificationStack(context.getResources());
         mHeadsUpAnimator = headsUpAnimator;
         initView(context);
     }
 
     public void initView(Context context) {
         updateResources(context);
+        mLockscreenNotificationStack.updateResources(context.getResources());
+    }
+
+    LockscreenNotificationStack getLockscreenNotificationStack() {
+        return mLockscreenNotificationStack;
     }
 
     private void updateResources(Context context) {
@@ -155,6 +162,7 @@ public class StackScrollAlgorithm {
         updateSpeedBumpState(algorithmState, speedBumpIndex);
         updateShelfState(algorithmState, ambientState);
         updateAlphaState(algorithmState, ambientState);
+        mLockscreenNotificationStack.apply(algorithmState, ambientState);
         getNotificationChildrenStates(algorithmState);
     }
 

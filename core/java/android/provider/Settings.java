@@ -7643,6 +7643,12 @@ public final class Settings {
         /**
          * @hide
          */
+        public static final String LOCK_SCREEN_NOTIFICATIONS_ANCHOR_POSITION =
+                "lock_screen_notifications_anchor_position";
+
+        /**
+         * @hide
+         */
         public static final String LOCKSCREEN_WEATHER_LOCATION = "lockscreen_weather_location";
 
         /**
@@ -12652,6 +12658,18 @@ public final class Settings {
          */
         public static final String LOCK_SCREEN_NOTIFICATION_MINIMALISM =
                 "lock_screen_notification_minimalism";
+
+        /**
+         * @hide
+         */
+        public static final String LOCK_SCREEN_STACKED_NOTIFICATIONS =
+                "lock_screen_stacked_notifications";
+
+        /**
+         * @hide
+         */
+        public static final String LOCK_SCREEN_NOTIFICATIONS_BOTTOM_ANCHORED =
+                "lock_screen_notifications_bottom_anchored";
 
         /**
          * Indicates whether snooze options should be shown on notifications

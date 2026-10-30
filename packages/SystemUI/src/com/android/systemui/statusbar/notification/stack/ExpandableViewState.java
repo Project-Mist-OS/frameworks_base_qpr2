@@ -29,6 +29,7 @@ import com.android.app.animation.Interpolators;
 import com.android.internal.dynamicanimation.animation.DynamicAnimation;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.PhysicsPropertyAnimator;
+import com.android.systemui.statusbar.notification.PropertyAnimator;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 import com.android.systemui.statusbar.notification.shared.FixCollapsingOvershootTiming;
@@ -96,6 +97,11 @@ public class ExpandableViewState extends ViewState {
     public boolean belowSpeedBump;
     public boolean inShelf;
 
+    public int lockscreenStackIndex = -1;
+    public float lockscreenStackContentAlpha = 1f;
+    public float lockscreenStackRoundness;
+    public boolean lockscreenStackScaleApplied;
+
     /**
      * A state indicating whether a headsup is currently fully visible, even when not scrolled.
      * Only valid if the view is heads upped.
@@ -137,6 +143,22 @@ public class ExpandableViewState extends ViewState {
             notGoneIndex = svs.notGoneIndex;
             location = svs.location;
             headsUpIsVisible = svs.headsUpIsVisible;
+            lockscreenStackIndex = svs.lockscreenStackIndex;
+            lockscreenStackContentAlpha = svs.lockscreenStackContentAlpha;
+            lockscreenStackRoundness = svs.lockscreenStackRoundness;
+            lockscreenStackScaleApplied = svs.lockscreenStackScaleApplied;
+        }
+    }
+
+    private void applyLockscreenStackState(View view, AnimationProperties properties,
+            boolean animate) {
+        if (view instanceof ExpandableNotificationRow row) {
+            row.setLockscreenStackIndex(lockscreenStackIndex);
+            PropertyAnimator.setProperty(row,
+                    ExpandableNotificationRow.LOCKSCREEN_STACK_CONTENT_ALPHA,
+                    lockscreenStackContentAlpha, properties, animate);
+            PropertyAnimator.setProperty(row, ExpandableNotificationRow.LOCKSCREEN_STACK_ROUNDNESS,
+                    lockscreenStackRoundness, properties, animate);
         }
     }
 
@@ -146,6 +168,7 @@ public class ExpandableViewState extends ViewState {
     @Override
     public void applyToView(View view) {
         super.applyToView(view);
+        applyLockscreenStackState(view, NO_NEW_ANIMATIONS, false);
         if (view instanceof ExpandableView) {
             ExpandableView expandableView = (ExpandableView) view;
 
@@ -193,6 +216,7 @@ public class ExpandableViewState extends ViewState {
     @Override
     public void animateTo(View child, AnimationProperties properties) {
         super.animateTo(child, properties);
+        applyLockscreenStackState(child, properties, true);
         if (!(child instanceof ExpandableView)) {
             return;
         }
@@ -427,6 +451,12 @@ public class ExpandableViewState extends ViewState {
         super.cancelAnimations(view);
         abortAnimation(view, TAG_ANIMATOR_HEIGHT);
         abortAnimation(view, TAG_ANIMATOR_TOP_INSET);
+        if (view instanceof ExpandableNotificationRow) {
+            PropertyAnimator.cancelAnimation(view,
+                    ExpandableNotificationRow.LOCKSCREEN_STACK_CONTENT_ALPHA);
+            PropertyAnimator.cancelAnimation(view,
+                    ExpandableNotificationRow.LOCKSCREEN_STACK_ROUNDNESS);
+        }
     }
 
     @Override
@@ -434,5 +464,11 @@ public class ExpandableViewState extends ViewState {
         super.finishAnimations(view);
         skipAnimationToEnd(view, TAG_ANIMATOR_HEIGHT);
         skipAnimationToEnd(view, TAG_ANIMATOR_TOP_INSET);
+        if (view instanceof ExpandableNotificationRow) {
+            skipAnimationToEnd(view,
+                    ExpandableNotificationRow.LOCKSCREEN_STACK_CONTENT_ALPHA.getAnimatorTag());
+            skipAnimationToEnd(view,
+                    ExpandableNotificationRow.LOCKSCREEN_STACK_ROUNDNESS.getAnimatorTag());
+        }
     }
 }
