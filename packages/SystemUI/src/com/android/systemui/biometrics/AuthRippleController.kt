@@ -24,6 +24,7 @@ import android.hardware.biometrics.BiometricSourceType
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.DisplayMetrics
+import android.util.Log
 import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.keyguard.KeyguardUpdateMonitor
@@ -109,14 +110,20 @@ constructor(
             Settings.System.LOCKSCREEN_WATER_RIPPLE_FULLSCREEN, 0, UserHandle.USER_CURRENT) == 1
 
     override fun start() {
+        // The command doesn't depend on the view, so it is always available for testing the ripple
+        // with `adb shell cmd statusbar auth-ripple`, even if the view isn't attached.
+        commandRegistry.registerCommand("auth-ripple") { AuthRippleCommand() }
+        Log.d(TAG, "start: viewAttached=$isAttachedToWindow")
         init()
     }
 
     init {
         if (!SceneContainerFlag.isEnabled) {
             rippleView?.repeatWhenAttached {
+                Log.d(TAG, "ripple view attached, collecting unlock ripple events")
                 repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.CREATED) {
                     authRippleInteractor.showUnlockRipple.collect { biometricUnlockSource ->
+                        Log.d(TAG, "unlock ripple event: source=$biometricUnlockSource")
                         if (biometricUnlockSource == BiometricUnlockSource.FINGERPRINT_SENSOR) {
                             showUnlockRippleInternal(BiometricSourceType.FINGERPRINT)
                         } else {
@@ -130,22 +137,22 @@ constructor(
 
     @VisibleForTesting
     public override fun onViewAttached() {
+        Log.d(TAG, "onViewAttached")
         authController.addCallback(authControllerCallback)
         updateRippleColor()
         updateUdfpsDependentParams()
         udfpsController?.addCallback(udfpsControllerCallback)
         configurationController.addCallback(configurationChangedListener)
         keyguardUpdateMonitor.registerCallback(keyguardUpdateMonitorCallback)
-        commandRegistry.registerCommand("auth-ripple") { AuthRippleCommand() }
     }
 
     @VisibleForTesting
     public override fun onViewDetached() {
+        Log.d(TAG, "onViewDetached")
         udfpsController?.removeCallback(udfpsControllerCallback)
         authController.removeCallback(authControllerCallback)
         keyguardUpdateMonitor.removeCallback(keyguardUpdateMonitorCallback)
         configurationController.removeCallback(configurationChangedListener)
-        commandRegistry.unregisterCommand("auth-ripple")
 
         mView.cancelUnlockedRipple()
         notificationShadeWindowController.setForcePluginOpen(false, this)
@@ -156,11 +163,21 @@ constructor(
         val unlockNotAllowed =
             !keyguardUpdateMonitor.isUnlockingWithBiometricAllowed(biometricSourceType)
         if (keyguardNotShowing || unlockNotAllowed || !isRippleEnabled) {
+            Log.d(
+                TAG,
+                "not showing unlock ripple: keyguardNotShowing=$keyguardNotShowing " +
+                    "unlockNotAllowed=$unlockNotAllowed rippleEnabled=$isRippleEnabled",
+            )
             logger.notShowingUnlockRipple(keyguardNotShowing, unlockNotAllowed)
             return
         }
 
         updateSensorLocation()
+        Log.d(
+            TAG,
+            "showing unlock ripple: source=$biometricSourceType animation=$unlockAnimation " +
+                "fingerprintSensor=$fingerprintSensorLocation faceSensor=$faceSensorLocation",
+        )
         if (biometricSourceType == BiometricSourceType.FINGERPRINT) {
             fingerprintSensorLocation?.let {
                 mView.setFingerprintSensorLocation(it, udfpsRadius)
