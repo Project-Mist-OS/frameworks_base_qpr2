@@ -18,10 +18,7 @@ package com.android.systemui.qs.panels.ui.compose
 
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
-import android.graphics.ComposeShader
-import android.graphics.LinearGradient
 import android.graphics.Matrix
-import android.graphics.PorterDuff
 import android.graphics.Shader
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material3.MaterialTheme
@@ -36,8 +33,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.toArgb
 import com.android.systemui.qs.panels.shared.model.AxQsImageFill
 import kotlin.math.max
 
@@ -54,7 +49,6 @@ val LocalAxQsImageFill = staticCompositionLocalOf<AxQsImageFill?> { null }
 private class ImageFillBrush(
     private val bitmap: Bitmap,
     private val rotateQuarter: Boolean,
-    private val dim: Float,
 ) : ShaderBrush() {
     override fun createShader(size: Size): Shader {
         val boxWidth = if (rotateQuarter) size.height else size.width
@@ -67,38 +61,16 @@ private class ImageFillBrush(
         if (rotateQuarter) matrix.postRotate(90f)
         matrix.postTranslate(size.width / 2f, size.height / 2f)
 
-        val image =
-            BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also {
-                it.setLocalMatrix(matrix)
-            }
-        if (dim <= 0f) return image
-
-        // A flat black layer over the image darkens it inside the shader itself, since
-        // ShaderBrush does not let us change the paint.
-        val black = Color.Black.copy(alpha = dim).toArgb()
-        return ComposeShader(
-            image,
-            LinearGradient(0f, 0f, 1f, 1f, black, black, Shader.TileMode.CLAMP),
-            PorterDuff.Mode.SRC_OVER,
-        )
+        return BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).also {
+            it.setLocalMatrix(matrix)
+        }
     }
 
     override fun equals(other: Any?): Boolean =
-        other is ImageFillBrush &&
-            other.bitmap === bitmap &&
-            other.rotateQuarter == rotateQuarter &&
-            other.dim == dim
+        other is ImageFillBrush && other.bitmap === bitmap && other.rotateQuarter == rotateQuarter
 
-    override fun hashCode(): Int =
-        31 * (31 * System.identityHashCode(bitmap) + rotateQuarter.hashCode()) + dim.hashCode()
+    override fun hashCode(): Int = 31 * System.identityHashCode(bitmap) + rotateQuarter.hashCode()
 }
-
-// Extra darkening in dark mode so white labels and icons keep their contrast on bright areas.
-private const val DARK_MODE_DIM = 0.4f
-
-@Composable
-@ReadOnlyComposable
-private fun isDarkQsTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
 /**
  * Color for text and icons drawn on top of an active tile or slider. The theme's onPrimary is dark
@@ -109,17 +81,14 @@ private fun isDarkQsTheme(): Boolean = MaterialTheme.colorScheme.background.lumi
 @ReadOnlyComposable
 internal fun axQsActiveContentColor(): Color {
     val fill = LocalAxQsImageFill.current ?: return MaterialTheme.colorScheme.onPrimary
-    // The image is dimmed in dark mode, so it never needs dark content there.
-    return if (fill.isLight && !isDarkQsTheme()) Color.Black else Color.White
+    return if (fill.isLight) Color.Black else Color.White
 }
 
 @Composable
-internal fun rememberAxQsImageBrush(fill: AxQsImageFill?, rotateQuarter: Boolean = false): Brush? {
-    val dim = if (isDarkQsTheme()) DARK_MODE_DIM else 0f
-    return remember(fill, rotateQuarter, dim) {
-        fill?.let { ImageFillBrush(it.bitmap, rotateQuarter, dim) }
+internal fun rememberAxQsImageBrush(fill: AxQsImageFill?, rotateQuarter: Boolean = false): Brush? =
+    remember(fill, rotateQuarter) {
+        fill?.let { ImageFillBrush(it.bitmap, rotateQuarter) }
     }
-}
 
 /**
  * Draws the image behind the content while [active] is true. Inactive and unavailable states are
