@@ -325,6 +325,7 @@ private fun AxQsSlider(
                     PlatformSliderDefaults.DefaultPlatformSliderDraggingCornerRadius * sliderScale,
                 icon = { icon(Modifier.size(iconSize).rotate(90f)) },
                 indicatorBrush = imageBrush,
+                sliderHeight = platformSliderHeight,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

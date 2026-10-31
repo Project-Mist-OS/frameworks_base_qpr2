@@ -84,6 +84,7 @@ import androidx.compose.ui.util.fastFirstOrNull
  * @param icon at the start of the slider. Icon is limited to a square space at the start of the
  *   slider
  * @param label is shown next to the icon.
+ * @param sliderHeight the thickness of the slider, 64dp by default.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,8 +102,8 @@ fun PlatformSlider(
     label: (@Composable (isDragging: Boolean) -> Unit)? = null,
     indicatorBackground: (@Composable (Modifier, Dp) -> Unit)? = null,
     indicatorBrush: Brush? = null,
+    sliderHeight: Dp = 64.dp,
 ) {
-    val sliderHeight: Dp = 64.dp
     val thumbSize: Dp = sliderHeight
     var isDragging by remember { mutableStateOf(false) }
     LaunchedEffect(interactionSource) {
