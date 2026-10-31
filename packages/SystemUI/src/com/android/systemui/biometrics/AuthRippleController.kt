@@ -26,7 +26,6 @@ import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
 import androidx.annotation.VisibleForTesting
-import androidx.lifecycle.repeatOnLifecycle
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.keyguard.KeyguardUpdateMonitorCallback
 import com.android.keyguard.logging.KeyguardLogger
@@ -36,10 +35,10 @@ import com.android.systemui.CoreStartable
 import com.android.systemui.biometrics.data.repository.FacePropertyRepository
 import com.android.systemui.biometrics.shared.model.UdfpsOverlayParams
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.deviceentry.domain.interactor.AuthRippleInteractor
 import com.android.systemui.keyguard.shared.model.BiometricUnlockSource
-import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.res.R
 import com.android.systemui.scene.shared.flag.SceneContainerFlag
@@ -54,6 +53,9 @@ import com.android.systemui.util.ViewController
 import java.io.PrintWriter
 import javax.inject.Inject
 import javax.inject.Provider
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Controls two ripple effects:
@@ -80,6 +82,8 @@ constructor(
     private val logger: KeyguardLogger,
     private val authRippleInteractor: AuthRippleInteractor,
     private val facePropertyRepository: FacePropertyRepository,
+    @Application private val applicationScope: CoroutineScope,
+    @Main private val mainDispatcher: CoroutineDispatcher,
     rippleView: AuthRippleView?,
 ) : ViewController<AuthRippleView>(rippleView), CoreStartable {
 
@@ -118,20 +122,19 @@ constructor(
         commandRegistry.registerCommand("auth-ripple") { AuthRippleCommand() }
         Log.d(TAG, "start: viewAttached=$isAttachedToWindow")
         init()
-    }
 
-    init {
+        // Listen for unlock events for as long as SystemUI runs. They used to be collected only
+        // while the ripple view was attached, which silently stopped the ripple whenever that
+        // lifecycle never started. The ripple view itself is only drawn on once it is attached.
         if (!SceneContainerFlag.isEnabled) {
-            rippleView?.repeatWhenAttached {
-                Log.d(TAG, "ripple view attached, collecting unlock ripple events")
-                repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.CREATED) {
-                    authRippleInteractor.showUnlockRipple.collect { biometricUnlockSource ->
-                        Log.d(TAG, "unlock ripple event: source=$biometricUnlockSource")
-                        if (biometricUnlockSource == BiometricUnlockSource.FINGERPRINT_SENSOR) {
-                            showUnlockRippleInternal(BiometricSourceType.FINGERPRINT)
-                        } else {
-                            showUnlockRippleInternal(BiometricSourceType.FACE)
-                        }
+            applicationScope.launch(mainDispatcher) {
+                Log.d(TAG, "collecting unlock ripple events")
+                authRippleInteractor.showUnlockRipple.collect { biometricUnlockSource ->
+                    Log.d(TAG, "unlock ripple event: source=$biometricUnlockSource")
+                    if (biometricUnlockSource == BiometricUnlockSource.FINGERPRINT_SENSOR) {
+                        showUnlockRippleInternal(BiometricSourceType.FINGERPRINT)
+                    } else {
+                        showUnlockRippleInternal(BiometricSourceType.FACE)
                     }
                 }
             }
