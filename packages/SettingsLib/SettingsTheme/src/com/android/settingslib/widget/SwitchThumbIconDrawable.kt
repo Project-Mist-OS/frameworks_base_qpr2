@@ -150,6 +150,22 @@ class SwitchThumbIconDrawable : Drawable() {
     @Suppress("OVERRIDE_DEPRECATION")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
+    // Without a constant state the selector that holds this drawable shares ONE instance between all
+    // switches, so the icon gets drawn with another switch's bounds. Every switch needs its own copy.
+    override fun getConstantState(): Drawable.ConstantState = State(checkIcon?.constantState)
+
+    private class State(private val checkState: Drawable.ConstantState?) : Drawable.ConstantState() {
+        override fun newDrawable(): Drawable = newDrawable(null)
+
+        override fun newDrawable(res: Resources?): Drawable =
+            SwitchThumbIconDrawable().apply {
+                // mutate() so tinting this copy does not tint the shared check mark.
+                checkIcon = checkState?.newDrawable(res)?.mutate()
+            }
+
+        override fun getChangingConfigurations(): Int = 0
+    }
+
     companion object {
         private const val CUSTOM_ICON_SCALE = 1.25f
         private const val DISABLED_ALPHA = 0.38f
