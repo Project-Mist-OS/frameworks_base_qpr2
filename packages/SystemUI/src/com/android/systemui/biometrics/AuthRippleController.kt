@@ -17,6 +17,7 @@
 package com.android.systemui.biometrics
 
 import android.content.Context
+import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.PointF
 import android.hardware.biometrics.BiometricFingerprintConstants
@@ -25,6 +26,8 @@ import android.os.UserHandle
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.annotation.VisibleForTesting
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.keyguard.KeyguardUpdateMonitorCallback
@@ -84,6 +87,7 @@ constructor(
     private val facePropertyRepository: FacePropertyRepository,
     @Application private val applicationScope: CoroutineScope,
     @Main private val mainDispatcher: CoroutineDispatcher,
+    private val windowManager: WindowManager,
     rippleView: AuthRippleView?,
 ) : ViewController<AuthRippleView>(rippleView), CoreStartable {
 
@@ -124,6 +128,7 @@ constructor(
             TAG,
             "start: view=${Integer.toHexString(mView.hashCode())} viewAttached=$isAttachedToWindow",
         )
+        hostRippleViewInOverlay()
         init()
 
         // Listen for unlock events for as long as SystemUI runs. They used to be collected only
@@ -141,6 +146,38 @@ constructor(
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * The ripple view inflated into the notification shade window is never attached to that window
+     * on this build, so it can't draw (it isn't hardware accelerated and gets no attach callbacks).
+     * Move it into an overlay window of its own, like the wired charging ripple, which attaches
+     * reliably. The view is GONE until an animation starts, so the window has no surface until then.
+     */
+    private fun hostRippleViewInOverlay() {
+        val overlayParams =
+            WindowManager.LayoutParams().apply {
+                width = WindowManager.LayoutParams.MATCH_PARENT
+                height = WindowManager.LayoutParams.MATCH_PARENT
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                format = PixelFormat.TRANSLUCENT
+                type = WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG
+                fitInsetsTypes = 0 // Ignore insets from all system bars
+                title = "Auth Ripple"
+                packageName = sysuiContext.opPackageName
+                flags =
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                setTrustedOverlay()
+            }
+        try {
+            (mView.parent as? ViewGroup)?.removeView(mView)
+            windowManager.addView(mView, overlayParams)
+            Log.d(TAG, "hosting the ripple view in an overlay window")
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to host the ripple view in an overlay window", e)
         }
     }
 
