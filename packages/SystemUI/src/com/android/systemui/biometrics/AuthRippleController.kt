@@ -514,9 +514,30 @@ constructor(
                         showUnlockedRipple(style)
                     }
 
+                    "status" -> dumpViewStatus(pw)
+
                     else -> invalidCommand(pw)
                 }
             }
+        }
+
+        private fun dumpViewStatus(pw: PrintWriter) {
+            pw.println("sceneContainer=${SceneContainerFlag.isEnabled}")
+            var view: android.view.View? = mView
+            var depth = 0
+            while (view != null && depth < 12) {
+                pw.println(
+                    "  ".repeat(depth) +
+                        "${view.javaClass.simpleName}@${Integer.toHexString(view.hashCode())} " +
+                        "attached=${view.isAttachedToWindow} visibility=${view.visibility} " +
+                        "size=${view.width}x${view.height} " +
+                        "windowToken=${view.windowToken != null} " +
+                        "hwAccelerated=${view.isHardwareAccelerated}"
+                )
+                view = view.parent as? android.view.View
+                depth++
+            }
+            pw.println("rootView=${mView.rootView.javaClass.simpleName}")
         }
 
         override fun help(pw: PrintWriter) {
@@ -528,6 +549,7 @@ constructor(
             pw.println("  custom <x-location: int> <y-location: int>")
             pw.println("  preview <style: 0..4> [x-location: int y-location: int]")
             pw.println("    0=default, 1=water, 2=watercolor, 3=glow wave, 4=rainbow glow")
+            pw.println("  status")
         }
 
         private fun invalidCommand(pw: PrintWriter) {
