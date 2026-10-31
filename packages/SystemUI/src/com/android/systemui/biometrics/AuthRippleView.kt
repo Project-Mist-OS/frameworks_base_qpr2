@@ -330,12 +330,20 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
         highFrameRate: Boolean = false,
     ) {
         cancelUnlockedRipple()
+        Log.d(
+            AuthRippleController.TAG,
+            "glow: rainbow=$rainbow hfr=$highFrameRate attached=$isAttachedToWindow " +
+                "hwAccelerated=$isHardwareAccelerated size=${width}x$height " +
+                "animatorsEnabled=${ValueAnimator.areAnimatorsEnabled()}",
+        )
 
         if (!ValueAnimator.areAnimatorsEnabled()) {
+            Log.w(AuthRippleController.TAG, "glow skipped: animators are disabled")
             onAnimationEnd?.run()
             return
         }
         if (!isHardwareAccelerated) {
+            Log.w(AuthRippleController.TAG, "glow skipped: view is not hardware accelerated")
             startUnlockedRipple(onAnimationEnd)
             return
         }
@@ -355,6 +363,7 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
             return
         }
 
+        Log.d(AuthRippleController.TAG, "glow: starting animation")
         glowPaint.shader = shader
         setRequestedFrameRate(if (highFrameRate) REQUESTED_FRAME_RATE_CATEGORY_HIGH else 60f)
         var lastFrame = -1L
@@ -420,6 +429,7 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
             { finishWaterRipple() },
             {
                 // The effect could not be set up, use the default ripple instead.
+                Log.w(AuthRippleController.TAG, "water effect failed, using the default ripple")
                 removeWaterRipple()
                 val completion = waterCompletion
                 waterCompletion = null

@@ -223,6 +223,7 @@ constructor(
         if (!isRippleEnabled) return
         notificationShadeWindowController.setForcePluginOpen(true, this)
 
+        Log.d(TAG, "playing unlock animation=$animation")
         val onEnd = Runnable { notificationShadeWindowController.setForcePluginOpen(false, this) }
         if (
             animation == WaterRippleView.EFFECT_WATER ||
