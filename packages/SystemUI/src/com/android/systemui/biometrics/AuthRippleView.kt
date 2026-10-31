@@ -466,7 +466,13 @@ class AuthRippleView(context: Context, attrs: AttributeSet?) : FrameLayout(conte
         visibility = GONE
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        Log.d(AuthRippleController.TAG, "view attached: ${Integer.toHexString(hashCode())}")
+    }
+
     override fun onDetachedFromWindow() {
+        Log.d(AuthRippleController.TAG, "view detached: ${Integer.toHexString(hashCode())}")
         cancelUnlockedRipple()
         super.onDetachedFromWindow()
     }

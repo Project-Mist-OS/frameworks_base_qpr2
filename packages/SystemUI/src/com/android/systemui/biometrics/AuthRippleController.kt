@@ -120,7 +120,10 @@ constructor(
         // The command doesn't depend on the view, so it is always available for testing the ripple
         // with `adb shell cmd statusbar auth-ripple`, even if the view isn't attached.
         commandRegistry.registerCommand("auth-ripple") { AuthRippleCommand() }
-        Log.d(TAG, "start: viewAttached=$isAttachedToWindow")
+        Log.d(
+            TAG,
+            "start: view=${Integer.toHexString(mView.hashCode())} viewAttached=$isAttachedToWindow",
+        )
         init()
 
         // Listen for unlock events for as long as SystemUI runs. They used to be collected only
