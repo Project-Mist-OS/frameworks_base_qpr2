@@ -6219,26 +6219,14 @@ public class NotificationStackScrollLayout
     }
 
     /**
-     * While the notifications of an app are previewed above the shelf, the stack grows upwards
-     * into the space the status bar leaves free, so the shelf and its icons stay in place.
+     * The notifications of an app are previewed directly above the shelf, below the clock, so the
+     * preview never lifts the stack up over the status bar and clock. The same layout applies
+     * whether or not the notifications are bottom-anchored.
      *
-     * @return how far the top of the stack moves up, or 0 if no preview is visible
+     * @return how far the top of the stack moves up, which is always 0
      */
     public float getMotoCompactPreviewTopOffset() {
-        if (!isMotoCompactPreviewVisible()) return 0f;
-        final View root = getRootView();
-        root.getLocationOnScreen(mTempInt2);
-        final int rootTop = mTempInt2[1];
-        getLocationOnScreen(mTempInt2);
-        final float viewTop = mTempInt2[1] - rootTop - getTranslationY();
-        final WindowInsets insets = root.getRootWindowInsets();
-        final int topInset = insets != null ? insets.getInsetsIgnoringVisibility(
-                WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()).top
-                : SystemBarUtils.getStatusBarHeight(mContext);
-        final float previewTop = Math.max(0f, topInset + mPaddingBetweenElements - viewTop);
-        final float stackTop = SceneContainerFlag.isEnabled()
-                ? mAmbientState.getStackScrollTop() : mAmbientState.getTopPadding();
-        return Math.max(0f, stackTop - previewTop);
+        return 0f;
     }
 
     private void requestAnimateLockscreenNotificationStack() {
