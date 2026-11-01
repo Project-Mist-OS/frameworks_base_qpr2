@@ -83,6 +83,7 @@ import com.android.systemui.statusbar.pipeline.shared.ui.model.SystemInfoCombine
 import com.android.systemui.statusbar.pipeline.shared.ui.model.VisibilityModel
 import com.android.systemui.statusbar.policy.domain.interactor.DeviceProvisioningInteractor
 import com.android.systemui.statusbar.quickactions.ime.domain.interactor.ImeIndicatorChipInteractor
+import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipsViewModel
 import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipsViewModelStore
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
 import com.android.systemui.statusbar.systemstatusicons.domain.interactor.SystemStatusIconBlocklistInteractor
@@ -304,6 +305,7 @@ constructor(
     private val imeIndicatorChipInteractor: ImeIndicatorChipInteractor,
     shareToAppChipViewModel: ShareToAppChipViewModel,
     @DisplayAware private val ongoingActivityChipsViewModel: OngoingActivityChipsViewModel,
+    statusBarPopupChipsViewModelFactory: StatusBarPopupChipsViewModel.Factory,
     statusBarPopupChipsViewModelStore: StatusBarPopupChipsViewModelStore,
     @DisplayAware animations: SystemStatusEventAnimationInteractor,
     @DisplayAware statusBarContentInsetsViewModel: StatusBarContentInsetsViewModel,
@@ -320,7 +322,9 @@ constructor(
     val tableLogger = tableLoggerFactory.getOrCreate(tableLogBufferName(thisDisplayId), 200)
 
     private val statusBarPopupChips by lazy {
-        statusBarPopupChipsViewModelStore.forDisplay(thisDisplayId)
+        statusBarPopupChipsViewModelStore.getOrCreate(thisDisplayId) {
+            statusBarPopupChipsViewModelFactory.create(thisDisplayId)
+        }
     }
 
     override val systemStatusIconBlockListInteractor: SystemStatusIconBlocklistInteractor =

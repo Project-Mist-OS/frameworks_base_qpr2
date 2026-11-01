@@ -25,20 +25,35 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
+/**
+ * Shares one [StatusBarPopupChipsViewModel] per display between the home status bar and the
+ * lockscreen status bar.
+ *
+ * The view model depends on per display bindings, so it must be built in the display's own
+ * dagger scope. The home status bar view model of each display creates it through [getOrCreate];
+ * other users (the keyguard status bar) look it up with [forDisplay].
+ */
 @SysUISingleton
 class StatusBarPopupChipsViewModelStore
 @Inject
 constructor(
-    private val factory: StatusBarPopupChipsViewModel.Factory,
     @Application private val applicationScope: CoroutineScope,
     private val dynamicIslandStateRepository: DynamicIslandStateRepository,
 ) {
     private val viewModels = mutableMapOf<Int, StatusBarPopupChipsViewModel>()
 
+    /** The view model of [displayId] if that display's status bar already created it. */
     @Synchronized
-    fun forDisplay(displayId: Int): StatusBarPopupChipsViewModel {
+    fun forDisplay(displayId: Int): StatusBarPopupChipsViewModel? = viewModels[displayId]
+
+    /** Returns the view model of [displayId], building it with [create] the first time. */
+    @Synchronized
+    fun getOrCreate(
+        displayId: Int,
+        create: () -> StatusBarPopupChipsViewModel,
+    ): StatusBarPopupChipsViewModel {
         return viewModels.getOrPut(displayId) {
-            factory.create(displayId).also { model ->
+            create().also { model ->
                 applicationScope.launch {
                     try {
                         coroutineScope {

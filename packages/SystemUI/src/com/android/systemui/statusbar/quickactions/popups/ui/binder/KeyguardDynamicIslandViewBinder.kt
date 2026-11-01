@@ -67,9 +67,11 @@ constructor(
                 val isDozing by keyguardInteractor.isDozing.collectAsState(initial = false)
 
                 if (onLockscreen && !isDozing) {
+                    // Created by the home status bar of this display; nothing to show before that.
                     val viewModel = remember {
                         viewModelStore.forDisplay(view.context.displayId)
                     }
+                    if (viewModel == null) return@setContent
                     DisposableEffect(viewModel) {
                         onDispose {
                             viewModel.lockscreenPopupChips
