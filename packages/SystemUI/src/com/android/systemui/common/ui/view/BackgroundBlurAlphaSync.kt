@@ -30,11 +30,19 @@ import kotlinx.coroutines.DisposableHandle
  * drag, the bouncer) a blurred lock icon or shortcut therefore keeps its full blur until the view
  * stops drawing, well after the icon itself has gone. Before every frame, fold the alphas from the
  * view up to the window root into the drawable instead.
+ *
+ * [localAlpha] is the alpha the owner wants for the drawable itself, before the view alphas apply.
  */
 class BackgroundBlurAlphaSync(
     private val view: View,
+    private val localAlpha: () -> Float,
     private val drawable: () -> BackgroundBlurDrawable?,
 ) : ViewTreeObserver.OnPreDrawListener {
+
+    constructor(
+        view: View,
+        drawable: () -> BackgroundBlurDrawable?,
+    ) : this(view, { 1f }, drawable)
 
     override fun onPreDraw(): Boolean {
         sync()
@@ -44,7 +52,7 @@ class BackgroundBlurAlphaSync(
     /** Applies the current effective alpha of [view] to the drawable. */
     fun sync() {
         val blur = drawable() ?: return
-        var alpha = 1f
+        var alpha = localAlpha()
         var v: View? = view
         while (v != null && alpha > 0f) {
             alpha *= v.alpha * v.transitionAlpha

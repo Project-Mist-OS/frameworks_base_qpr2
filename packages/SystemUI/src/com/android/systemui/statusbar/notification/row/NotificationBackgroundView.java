@@ -42,6 +42,7 @@ import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.internal.util.ContrastColorUtil;
 import com.android.systemui.Dumpable;
 import com.android.systemui.common.shared.colors.SurfaceEffectColors;
+import com.android.systemui.common.ui.view.BackgroundBlurAlphaSync;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.shared.NotificationAddXOnHoverToDismiss;
 import com.android.systemui.util.Assert;
@@ -49,6 +50,8 @@ import com.android.systemui.util.DrawableDumpKt;
 
 import java.io.PrintWriter;
 import java.util.Arrays;
+
+import kotlinx.coroutines.DisposableHandle;
 
 /**
  * A view that can be used for both the dimmed and normal background of an notification.
@@ -81,6 +84,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
     private final int convexR = 9;
     private final int concaveR = 22;
     private BackgroundBlurDrawable mBackgroundBlurDrawable;
+    @Nullable private DisposableHandle mBlurAlphaSync;
     @VisibleForTesting
     protected View.OnAttachStateChangeListener mOnAttachStateChangeListener;
 
@@ -356,6 +360,7 @@ public class NotificationBackgroundView extends View implements Dumpable,
                                 mBackgroundBlurDrawable.setColor(mNormalColor);
 
                                 updateBackgroundRadii();
+                                startBlurAlphaSync();
                                 invalidate();
                             }
                             NotificationBackgroundView.this.removeOnAttachStateChangeListener(this);
@@ -375,10 +380,44 @@ public class NotificationBackgroundView extends View implements Dumpable,
                 removeOnAttachStateChangeListener(mOnAttachStateChangeListener);
                 mOnAttachStateChangeListener = null;
             }
+            stopBlurAlphaSync();
             if (mBackgroundBlurDrawable != null) {
                 mBackgroundBlurDrawable.setCallback(null);
             }
             mBackgroundBlurDrawable = null;
+        }
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        startBlurAlphaSync();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        stopBlurAlphaSync();
+        super.onDetachedFromWindow();
+    }
+
+    /**
+     * The blur region is composited outside of the view tree, so the alpha of the row that fades
+     * in or out (heads up, swipe, shade drag) never reaches it. Fold it into the blur drawable
+     * before every frame.
+     */
+    private void startBlurAlphaSync() {
+        stopBlurAlphaSync();
+        if (mBackgroundBlurDrawable == null || !isAttachedToWindow()) {
+            return;
+        }
+        mBlurAlphaSync = new BackgroundBlurAlphaSync(
+                this, () -> mDrawableAlpha / 255f, () -> mBackgroundBlurDrawable).start();
+    }
+
+    private void stopBlurAlphaSync() {
+        if (mBlurAlphaSync != null) {
+            mBlurAlphaSync.dispose();
+            mBlurAlphaSync = null;
         }
     }
 
