@@ -150,7 +150,11 @@ constructor(
                         changed = true
                     }
                     if (mHeadsUpManager.isHeadsUpEntry(key)) {
-                        mHeadsUpManager.removeNotification(key, true)
+                        mHeadsUpManager.removeNotification(
+                            key,
+                            true,
+                            "Dynamic Island call visibility changed",
+                        )
                         changed = true
                     }
                 }

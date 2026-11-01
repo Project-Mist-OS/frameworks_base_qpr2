@@ -320,6 +320,8 @@ private fun UtilityStatusIslandChip(
     modifier: Modifier = Modifier,
 ) {
     val collapseState = rememberDynamicIslandCollapseState(viewModel.isPopupShown, popupAttached)
+    val chipDescription =
+        viewModel.contentDescription?.loadContentDescription(LocalContext.current).orEmpty()
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val pressScale by rememberIslandPressScale(isPressed)
