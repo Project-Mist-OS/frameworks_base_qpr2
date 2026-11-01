@@ -15,13 +15,14 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,8 +47,10 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.android.compose.theme.PlatformTheme
 import com.android.systemui.shared.recents.utilities.Utilities
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.systemui.islandevents.model.IslandEvent
+import com.android.systemui.axdynamicbar.shared.ExpandedMaxWidth
 import com.android.systemui.axdynamicbar.ui.compose.ExpandedIslandContent
+import com.android.systemui.axdynamicbar.ui.compose.NotificationAlertCard
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
@@ -59,6 +62,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import android.view.WindowInsets
@@ -87,9 +91,10 @@ constructor(
         val needsOverlay =
             combine(
                 viewModel.isExpanded,
+                viewModel.interactor.uiState.map { it.notificationAlert },
                 viewModel.isOnKeyguard,
-            ) { expanded, onKeyguard ->
-                !onKeyguard && expanded
+            ) { expanded, alert, onKeyguard ->
+                !onKeyguard && (expanded || alert != null)
             }
 
         needsOverlay
@@ -99,7 +104,7 @@ constructor(
                     hideOverlayJob = null
                     showOverlay()
                 } else {
-                    
+
                     hideOverlayJob?.cancel()
                     hideOverlayJob =
                         applicationScope.launch {
@@ -146,7 +151,7 @@ constructor(
             setContent { PlatformTheme { OverlayContent(viewModel, statusBarTop, hasCutout) } }
             setOnTouchListener { _, event ->
                 if (event.action == android.view.MotionEvent.ACTION_OUTSIDE) {
-                    viewModel.statusBarExpansion.collapse()
+                    viewModel.collapseFromOutsideTouch(event.downTime)
                     true
                 } else {
                     false
@@ -159,14 +164,11 @@ constructor(
         view.setViewTreeOnBackPressedDispatcherOwner(lifecycleOwner)
         panelLifecycleOwner = lifecycleOwner
 
-        val isCurrentlyExpanded = viewModel.isExpanded.value
         val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_INSET_DECOR or
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-            if (isCurrentlyExpanded) 0
-            else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
 
         val params =
             WindowManager.LayoutParams(
@@ -178,6 +180,7 @@ constructor(
             )
         params.gravity = Gravity.TOP or Gravity.FILL_HORIZONTAL
         params.title = "AxDynamicBarExpanded"
+        updateFocusFlags(params, viewModel.isExpanded.value)
 
         windowManager.addView(view, params)
         overlayView = view
@@ -209,12 +212,11 @@ constructor(
         shrinkRunnable = null
         val view = overlayView ?: return@ensureMainThread
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return@ensureMainThread
+        updateFocusFlags(params, expanded)
         if (expanded) {
-            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
             params.height = WindowManager.LayoutParams.WRAP_CONTENT
             windowManager.updateViewLayout(view, params)
         } else {
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             windowManager.updateViewLayout(view, params)
             val runnable = Runnable {
                 val v = overlayView ?: return@Runnable
@@ -230,12 +232,24 @@ constructor(
     private fun setOverlayFocusable(focusable: Boolean) = ensureMainThread {
         val view = overlayView ?: return@ensureMainThread
         val params = view.layoutParams as? WindowManager.LayoutParams ?: return@ensureMainThread
-        if (focusable) {
-            params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-        } else {
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        }
+        updateFocusFlags(params, focusable, needsInputMethod = focusable)
         windowManager.updateViewLayout(view, params)
+    }
+
+    private fun updateFocusFlags(
+        params: WindowManager.LayoutParams,
+        focusable: Boolean,
+        needsInputMethod: Boolean = false,
+    ) {
+        // Only a notification reply may take IME focus; expansion must preserve the app's keyboard.
+        val focusFlags = when {
+            needsInputMethod -> 0
+            focusable -> WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+            else -> WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        val focusMask = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+        params.flags = (params.flags and focusMask.inv()) or focusFlags
     }
 }
 
@@ -245,16 +259,28 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
     val isLargeScreen = Utilities.isLargeScreen(LocalContext.current)
 
     val largeScreenExtra = if (isLargeScreen) 4.dp else 0.dp
-    val baseTopPad = 4.dp
-    val topPad = baseTopPad + if (hasCutout) largeScreenExtra
+    val topPad = if (hasCutout) largeScreenExtra
         else with(density) { statusBarHeightPx.toDp() } + largeScreenExtra
     val chipState by viewModel.chipState.collectAsStateWithLifecycle()
     val isExpanded by viewModel.isExpanded.collectAsStateWithLifecycle()
+    val uiState by viewModel.interactor.uiState.collectAsStateWithLifecycle()
+    val isOnKeyguard by viewModel.isOnKeyguard.collectAsStateWithLifecycle()
+    val notifAlert = uiState.notificationAlert
+    val compactNotifs by viewModel.interactor.settings.compactNotifications.collectAsStateWithLifecycle()
+
+    val lastAlert = remember { mutableStateOf<IslandEvent.Notification?>(null) }
+    if (notifAlert != null) lastAlert.value = notifAlert
 
     val expandedVisible = remember { MutableTransitionState(false) }
+    val showNotif = !isExpanded && notifAlert != null
+    val notifVisible = remember { MutableTransitionState(false) }
 
     LaunchedEffect(isExpanded) {
         expandedVisible.targetState = isExpanded
+    }
+
+    LaunchedEffect(showNotif) {
+        notifVisible.targetState = showNotif
     }
 
     LaunchedEffect(chipState) {
@@ -279,19 +305,18 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
             transformOrigin = origin,
         ),
     ) {
-        
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .pointerInput(Unit) {
                     val slop = viewConfiguration.touchSlop
                     awaitEachGesture {
-                        
+
                         var ev: PointerEvent
                         do {
                             ev = awaitPointerEvent(PointerEventPass.Final)
                         } while (!ev.changes.any { it.changedToDownIgnoreConsumed() })
-                        
+
                         val downChange =
                             ev.changes.firstOrNull { it.changedToDownIgnoreConsumed() }
                                 ?: ev.changes.firstOrNull()
@@ -338,15 +363,50 @@ private fun OverlayContent(viewModel: AxDynamicBarChipViewModel, statusBarHeight
                             indication = null,
                             onClick = {}
                         )
-                ) {                
-                   ExpandedIslandContent(
-                    events = filtered,
-                    interactor = viewModel.interactor,
-                    onCollapse = { viewModel.statusBarExpansion.collapse() },
-                    pinnedEventId = state.event.id,
-                    hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
-                  ) 
+                ) {
+                    ExpandedIslandContent(
+                        events = filtered,
+                        interactor = viewModel.interactor,
+                        onCollapse = { viewModel.statusBarExpansion.collapse() },
+                        pinnedEventId = state.event.id,
+                        hapticsViewModelFactory = viewModel.interactor.sliderHapticsViewModelFactory,
+                    )
                 }
+            }
+        }
+    }
+
+    AnimatedVisibility(
+        visibleState = notifVisible,
+        enter = fadeIn(tween(300)) + scaleIn(
+            animationSpec = tween(300),
+            initialScale = 0.4f,
+            transformOrigin = origin,
+        ),
+        exit = fadeOut(tween(250)) + scaleOut(
+            animationSpec = tween(250),
+            targetScale = 0.4f,
+            transformOrigin = origin,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = topPad),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            val alert = lastAlert.value
+            if (alert != null) {
+                NotificationAlertCard(
+                    notification = alert,
+                    interactor = viewModel.interactor,
+                    onDismiss = { viewModel.interactor.dismissNotificationAlert() },
+                    initiallyCompact = compactNotifs,
+                    modifier =
+                        Modifier.widthIn(max = ExpandedMaxWidth)
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                )
             }
         }
     }

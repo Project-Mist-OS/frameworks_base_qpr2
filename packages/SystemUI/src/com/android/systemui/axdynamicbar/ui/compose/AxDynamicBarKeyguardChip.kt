@@ -112,8 +112,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.android.systemui.axdynamicbar.model.IslandEvent
-import com.android.systemui.axdynamicbar.model.RecordingState
+import com.android.systemui.islandevents.model.IslandEvent
+import com.android.systemui.islandevents.model.RecordingState
 import com.android.systemui.axdynamicbar.shared.*
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel
 import com.android.systemui.axdynamicbar.ui.KeyguardBatteryInfo
@@ -189,7 +189,7 @@ fun AxDynamicBarKeyguardChip(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.chipState.collectAsStateWithLifecycle()
-    val isOnKeyguard by viewModel.isOnKeyguard.collectAsStateWithLifecycle()
+    val isKeyguardChipVisible by viewModel.isKeyguardChipVisible.collectAsStateWithLifecycle()
     val isEnabled by viewModel.isEnabled.collectAsStateWithLifecycle()
     val isKeyguardEnabled by viewModel.isKeyguardEnabled.collectAsStateWithLifecycle()
     val isKeyguardMusicPillEnabled by viewModel.isKeyguardMusicPillEnabled.collectAsStateWithLifecycle()
@@ -198,6 +198,7 @@ fun AxDynamicBarKeyguardChip(
     val isKeyguardExpanded by viewModel.isKeyguardExpanded.collectAsStateWithLifecycle()
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val batteryString by viewModel.batteryString.collectAsStateWithLifecycle()
+    val isKeyguardDynamicBarEnabled = isEnabled && isKeyguardEnabled
 
     val motionScheme = MaterialTheme.motionScheme
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
@@ -205,7 +206,7 @@ fun AxDynamicBarKeyguardChip(
     Box(modifier = modifier) {
 
         val expandedVisibleState = remember { MutableTransitionState(false) }
-        expandedVisibleState.targetState = isKeyguardExpanded && state != null
+        expandedVisibleState.targetState = isKeyguardChipVisible && isKeyguardExpanded && state != null
         LaunchedEffect(expandedVisibleState.isIdle, expandedVisibleState.currentState) {
             if (expandedVisibleState.isIdle && !expandedVisibleState.currentState) {
                 viewModel.keyguardExpansion.notifyCollapseSettled()
@@ -231,7 +232,7 @@ fun AxDynamicBarKeyguardChip(
         }
 
         AnimatedVisibility(
-            visible = isOnKeyguard && isEnabled && isKeyguardEnabled && !isKeyguardExpanded,
+            visible = isKeyguardChipVisible && !isKeyguardExpanded,
             enter = fadeIn(tween(durationMillis = 200, delayMillis = 300)) +
                 scaleIn(
                     initialScale = 0.9f,
@@ -271,23 +272,28 @@ fun AxDynamicBarKeyguardChip(
         ) {
             val chipState = state
             if (chipState != null) {
-                val rawEvent = chipState.event
-                val displayEvent: com.android.systemui.axdynamicbar.model.IslandEvent? =
+                val rawEvent = chipState.notificationAlert ?: chipState.event
+                val displayEvent: com.android.systemui.islandevents.model.IslandEvent? =
                     when {
+                        !isKeyguardDynamicBarEnabled -> chipState.allEvents.firstOrNull {
+                            isKeyguardMusicPillEnabled && it is IslandEvent.Media
+                        }
                         isKeyguardMusicPillEnabled -> rawEvent
-                        rawEvent is com.android.systemui.axdynamicbar.model.IslandEvent.Media -> {
-                            chipState.allEvents.firstOrNull { it !is com.android.systemui.axdynamicbar.model.IslandEvent.Media }
+                        rawEvent is com.android.systemui.islandevents.model.IslandEvent.Media -> {
+                            chipState.allEvents.firstOrNull { it !is com.android.systemui.islandevents.model.IslandEvent.Media }
                         }
                         else -> rawEvent
                     }
 
                 if (displayEvent == null) {
-                    KeyguardBatteryChip(
-                        batteryInfo,
-                        keyguardBatteryChipMode,
-                        batteryString,
-                        modifier,
-                    )
+                    if (isKeyguardDynamicBarEnabled) {
+                        KeyguardBatteryChip(
+                            batteryInfo,
+                            keyguardBatteryChipMode,
+                            batteryString,
+                            modifier,
+                        )
+                    }
                     return@AnimatedVisibility
                 }
 
@@ -334,19 +340,23 @@ fun AxDynamicBarKeyguardChip(
                         onClick = null,
                         defaultMinSize = false,
                     ) { expandable ->
+                        val keyguardEventCount = remember(chipState.allEvents, isKeyguardMusicPillEnabled) {
+                            if (isKeyguardMusicPillEnabled) chipState.eventCount
+                            else chipState.allEvents.count { it !is IslandEvent.Media }
+                        }
                         KeyguardChipBody(
                             event = event,
                             accent = accent,
                             contentColor = contentColor,
                             progress = progress,
-                            eventCount = chipState.eventCount,
+                            eventCount = keyguardEventCount,
                             viewModel = viewModel,
                             batteryString = batteryString,
                             aospChipExpandable = expandable,
                         )
                     }
                 }
-            } else {
+            } else if (isKeyguardDynamicBarEnabled) {
                 KeyguardBatteryChip(
                     batteryInfo,
                     keyguardBatteryChipMode,
@@ -913,6 +923,7 @@ private fun KeyguardPrimaryText(event: IslandEvent, color: Color, modifier: Modi
             )
         }
         is IslandEvent.Alarm -> MarqueeText(event.label.ifEmpty { stringResource(R.string.ax_dynamic_bar_alarm) }, color, modifier)
+        is IslandEvent.Call -> CallTimerText(event, modifier, color)
         is IslandEvent.Torch -> MarqueeText(
             if (event.supportsLevel) "${(event.level.toFloat() / event.maxLevel * 100).toInt()}%"
             else stringResource(R.string.ax_dynamic_bar_flashlight),
@@ -1053,6 +1064,7 @@ private fun secondaryTextFor(event: IslandEvent): String? = when (event) {
             triggerTime.takeIfDistinctFrom(event.label)
         } else null
     }
+    is IslandEvent.Call -> event.callerName
     is IslandEvent.BiometricUnlock -> event.sourceName
     is IslandEvent.Notification ->
         event.text
@@ -1079,6 +1091,30 @@ private fun String.takeIfDistinctFrom(vararg others: String?): String? {
     if (value.isEmpty()) return null
     return value.takeIf { candidate ->
         others.none { other -> candidate.equals(other?.trim(), ignoreCase = true) }
+    }
+}
+
+@Composable
+private fun CallTimerText(event: IslandEvent.Call, modifier: Modifier, overrideColor: Color? = null) {
+    val isActive = event.callType == "Phone:active"
+    if (isActive && event.callStartTimeMs > 0L) {
+        var elapsedMs by remember(event.callStartTimeMs) {
+            mutableLongStateOf((System.currentTimeMillis() - event.callStartTimeMs).coerceAtLeast(0L))
+        }
+        LaunchedEffect(event.callStartTimeMs) {
+            while (true) {
+                delay(1000)
+                elapsedMs = (System.currentTimeMillis() - event.callStartTimeMs).coerceAtLeast(0L)
+            }
+        }
+        val color = overrideColor ?: GreenAccent
+        Text(formatElapsedTime(elapsedMs), color = color, style = PillMono, modifier = modifier)
+    } else {
+        MarqueeText(
+            stringResource(if (isActive) R.string.ax_dynamic_bar_call else R.string.ax_dynamic_bar_incoming_call),
+            overrideColor ?: if (isActive) GreenAccent else BlueAccent,
+            modifier,
+        )
     }
 }
 

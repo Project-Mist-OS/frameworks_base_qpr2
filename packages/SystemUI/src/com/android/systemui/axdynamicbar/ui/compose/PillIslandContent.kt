@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FlashlightOn
@@ -68,8 +69,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
-import com.android.systemui.axdynamicbar.model.IslandEvent
-import com.android.systemui.axdynamicbar.model.RecordingState
+import com.android.systemui.islandevents.model.IslandEvent
+import com.android.systemui.islandevents.model.RecordingState
 import com.android.systemui.axdynamicbar.shared.*
 import androidx.compose.ui.graphics.graphicsLayer
 import com.android.systemui.res.R
@@ -140,8 +141,21 @@ internal fun CircleChip(
         }
 
         Box(modifier = Modifier.size(CircleChipIconSize), contentAlignment = Alignment.Center) {
-            PillEventIcon(event, tint = contentColor, animated = false)
+            IslandPillEventIcon(event, tint = contentColor, animated = false)
         }
+    }
+}
+
+/** Status-bar glyphs on frosted containers; keyguard callers retain their existing fallbacks. */
+@Composable
+internal fun IslandPillEventIcon(event: IslandEvent, tint: Color, animated: Boolean = true) {
+    when (event) {
+        is IslandEvent.Media -> MediaPillIcon(event, animated, tint)
+        is IslandEvent.Call -> CallPillIcon(event, tint)
+        is IslandEvent.Notification -> NotificationPillIcon(event, tint)
+        is IslandEvent.Sports -> SportsPillIcon(event, tint)
+        is IslandEvent.AppSwitch -> AppSwitchPillIcon(event, tint)
+        else -> PillEventIcon(event, tint, animated)
     }
 }
 
@@ -170,6 +184,7 @@ internal fun PillEventIcon(
         is IslandEvent.RingerMode -> RingerIcon(event, tint)
         is IslandEvent.Vpn -> AnimatedShieldIcon(tint ?: IndigoAccent)
         is IslandEvent.Clipboard -> AnimatedClipboardIcon(tint ?: IndigoAccent)
+        is IslandEvent.Call -> CallPillIcon(event)
         is IslandEvent.Notification -> NotificationPillIcon(event)
         is IslandEvent.AppSwitch -> AppSwitchPillIcon(event)
         is IslandEvent.Torch ->
@@ -381,7 +396,8 @@ private fun AnimatedTrophyIcon(color: Color) {
 }
 
 @Composable
-private fun MediaPillIcon(event: IslandEvent.Media, animated: Boolean = true) {
+private fun MediaPillIcon(event: IslandEvent.Media, animated: Boolean = true, tint: Color? = null) {
+    val color = tint ?: OrangeAccent
     event.albumArt?.let { art ->
         Image(
             bitmap = art.toSquareScaledBitmap(16.dp),
@@ -392,11 +408,11 @@ private fun MediaPillIcon(event: IslandEvent.Media, animated: Boolean = true) {
     }
         ?: Box(
             modifier =
-                Modifier.size(16.dp).clip(CircleShape).background(OrangeAccent.copy(alpha = 0.42f)),
+                Modifier.size(16.dp).clip(CircleShape).background(color.copy(alpha = 0.42f)),
             contentAlignment = Alignment.Center,
         ) {
             WaveformAnimation(
-                OrangeAccent,
+                color,
                 Modifier.size(10.dp),
                 isAnimating = animated && event.isPlaying,
                 barCount = 3,
@@ -825,17 +841,43 @@ private fun AnimatedRecentsIcon(color: Color) {
 }
 
 @Composable
-private fun NotificationPillIcon(event: IslandEvent.Notification) {
+private fun CallPillIcon(event: IslandEvent.Call, tint: Color? = null) {
     val icon = event.appIcon
-    if (icon != null) {
+    icon?.let {
         Image(
-            bitmap = icon.toScaledBitmap(16.dp),
+            bitmap = it.toScaledBitmap(16.dp),
             contentDescription = null,
-            modifier = Modifier.size(16.dp).clip(ShapeXs),
+            modifier =
+                Modifier.size(16.dp)
+                    .clip(ShapeXs),
         )
-    } else {
-        Icon(Icons.Filled.Notifications, null, tint = BlueAccent, modifier = Modifier.size(SizeBadge))
-    }
+    } ?: Icon(Icons.Filled.Call, null, tint = tint ?: GreenAccent, modifier = Modifier.size(SizeBadge))
+}
+
+@Composable
+private fun NotificationPillIcon(event: IslandEvent.Notification, tint: Color? = null) {
+    val icon = event.senderIcon ?: event.appIcon
+    val isRound = event.isConversation && event.senderIcon != null
+    val hasBadge = event.isConversation && event.senderIcon != null && event.appIcon != null
+    icon?.let {
+        if (hasBadge) {
+            BadgedContactIcon(
+                mainIcon = it,
+                badgeIcon = event.appIcon!!,
+                mainSize = 16.dp,
+                badgeSize = 9.dp,
+                isRound = true,
+            )
+        } else {
+            Image(
+                bitmap = it.toScaledBitmap(16.dp),
+                contentDescription = null,
+                modifier =
+                    Modifier.size(16.dp)
+                        .clip(if (isRound) CircleShape else ShapeXs),
+            )
+        }
+    } ?: Icon(Icons.Filled.Notifications, null, tint = tint ?: BlueAccent, modifier = Modifier.size(SizeBadge))
 }
 
 private val DOWNLOAD_KEYWORDS = Regex(
@@ -926,7 +968,7 @@ private fun PromotedOngoingText(event: IslandEvent.PromotedOngoing, modifier: Mo
 }
 
 @Composable
-private fun SportsPillIcon(event: IslandEvent.Sports) {
+private fun SportsPillIcon(event: IslandEvent.Sports, tint: Color? = null) {
     val icon = event.team1Icon ?: event.team2Icon ?: event.appIcon
     if (icon != null) {
         Image(
@@ -936,7 +978,7 @@ private fun SportsPillIcon(event: IslandEvent.Sports) {
             contentScale = ContentScale.Crop,
         )
     } else {
-        AnimatedTrophyIcon(accentColorFor(event))
+        AnimatedTrophyIcon(tint ?: accentColorFor(event))
     }
 }
 
@@ -964,7 +1006,7 @@ private fun SportsText(event: IslandEvent.Sports, modifier: Modifier, overrideCo
 }
 
 @Composable
-private fun AppSwitchPillIcon(event: IslandEvent.AppSwitch) {
+private fun AppSwitchPillIcon(event: IslandEvent.AppSwitch, tint: Color? = null) {
     val app = event.previousApp ?: event.recentApps.firstOrNull()
     app?.appIcon?.let {
         Image(
@@ -973,7 +1015,7 @@ private fun AppSwitchPillIcon(event: IslandEvent.AppSwitch) {
             modifier = Modifier.size(16.dp).clip(CircleShape),
             contentScale = ContentScale.Crop,
         )
-    } ?: AnimatedRecentsIcon(SubtleGray)
+    } ?: AnimatedRecentsIcon(tint ?: SubtleGray)
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -1173,6 +1215,7 @@ internal fun PillEventText(
         is IslandEvent.Vpn -> MarqueeLabel(stringResource(R.string.ax_dynamic_bar_vpn_active), overrideColor ?: IndigoAccent, modifier)
         is IslandEvent.Clipboard ->
             MarqueeLabel(event.preview.ifEmpty { stringResource(R.string.ax_dynamic_bar_copied) }, overrideColor ?: IndigoAccent, modifier)
+        is IslandEvent.Call -> CallTimerText(event, modifier, overrideColor)
         is IslandEvent.Notification -> {
             val name = event.title
             if (name != null) {
@@ -1182,7 +1225,11 @@ internal fun PillEventText(
             }
         }
         is IslandEvent.AppSwitch ->
-            MarqueeLabel(stringResource(R.string.ax_dynamic_bar_recents), overrideColor ?: SubtleGray, modifier)
+            MarqueeLabel(
+                event.previousApp?.appName ?: stringResource(R.string.ax_dynamic_bar_recents),
+                overrideColor ?: SubtleGray,
+                modifier,
+            )
         is IslandEvent.Torch -> {
             val label =
                 if (event.supportsLevel)
@@ -1434,6 +1481,30 @@ private fun StopwatchText(event: IslandEvent.Stopwatch, modifier: Modifier, over
 }
 
 @Composable
+private fun CallTimerText(event: IslandEvent.Call, modifier: Modifier, overrideColor: Color? = null) {
+    val isActive = event.callType == "Phone:active"
+    if (isActive && event.callStartTimeMs > 0L) {
+        var elapsedMs by remember(event.callStartTimeMs) {
+            mutableLongStateOf((System.currentTimeMillis() - event.callStartTimeMs).coerceAtLeast(0L))
+        }
+        LaunchedEffect(event.callStartTimeMs) {
+            while (true) {
+                delay(1000)
+                elapsedMs = (System.currentTimeMillis() - event.callStartTimeMs).coerceAtLeast(0L)
+            }
+        }
+        val color = overrideColor ?: GreenAccent
+        Text(formatElapsedTime(elapsedMs), color = color, style = PillMono, modifier = modifier)
+    } else {
+        MarqueeLabel(
+            stringResource(if (isActive) R.string.ax_dynamic_bar_call else R.string.ax_dynamic_bar_incoming_call),
+            overrideColor ?: if (isActive) GreenAccent else BlueAccent,
+            modifier,
+        )
+    }
+}
+
+@Composable
 private fun NotifBellBadge(modifier: Modifier, count: Int) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Icon(Icons.Filled.Notifications, null, tint = BlueAccent, modifier = Modifier.size(SizeBadge))
@@ -1459,6 +1530,32 @@ private fun NotifBellBadge(modifier: Modifier, count: Int) {
     }
 }
 
+@Composable
+fun BadgedContactIcon(
+    mainIcon: Drawable,
+    badgeIcon: Drawable,
+    mainSize: Dp,
+    badgeSize: Dp,
+    isRound: Boolean = true,
+) {
+    Box(modifier = Modifier.size(mainSize)) {
+        Image(
+            bitmap = mainIcon.toScaledBitmap(mainSize),
+            contentDescription = null,
+            modifier =
+                Modifier.size(mainSize)
+                    .clip(if (isRound) CircleShape else ShapeXs),
+            contentScale = ContentScale.Crop,
+        )
+        Image(
+            bitmap = badgeIcon.toScaledBitmap(badgeSize),
+            contentDescription = null,
+            modifier =
+                Modifier.size(badgeSize).align(Alignment.BottomEnd).clip(RoundedCornerShape(3.dp)),
+            contentScale = ContentScale.Crop,
+        )
+    }
+}
 
 @Composable
 fun PulsingDot(color: Color, size: Dp = 8.dp, durationMs: Int = 600, minAlpha: Float = AlphaDisabled) {

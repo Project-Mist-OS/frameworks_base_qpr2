@@ -69,15 +69,18 @@ internal fun MagneticSwipeToDismiss(
 
     val absOff = maxOf(abs(offsetX.value), abs(offsetY.value))
     val progress = (absOff / (detachPx * 4f)).coerceIn(0f, 1f)
+    val contentAlpha = 1f - progress * 0.5f
 
-    CompositionLocalProvider(LocalDismissSwipeLock provides swipeLock) {
+    CompositionLocalProvider(
+        LocalDismissSwipeLock provides swipeLock,
+    ) {
         Box(
             modifier =
                 modifier
                     .graphicsLayer {
                         translationX = offsetX.value
                         translationY = offsetY.value
-                        alpha = 1f - progress * 0.5f
+                        alpha = contentAlpha
                         scaleX = 1f - progress * 0.04f
                         scaleY = 1f - progress * 0.04f
                         rotationZ = (offsetX.value / detachPx).coerceIn(-1f, 1f) * 2f
@@ -149,7 +152,6 @@ internal fun MagneticSwipeToDismiss(
                                 if (axis == 0) {
                                     if (abs(dx) > touchSlop || abs(dy) > touchSlop) {
                                         val wouldBeHorizontal = abs(dx) >= abs(dy)
-                                        // If a child (seekbar) has locked horizontal swipe, skip.
                                         if (wouldBeHorizontal && swipeLock.value) {
                                             break
                                         }

@@ -30,7 +30,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,7 +43,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.systemui.axdynamicbar.shared.IslandActions
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.systemui.islandevents.model.IslandEvent
 import androidx.compose.ui.platform.LocalContext
 import com.android.systemui.axdynamicbar.shared.*
 import com.android.systemui.res.R
@@ -68,41 +67,60 @@ private fun resolveRemoteViews(ctx: Context, notification: Notification): Remote
     return null
 }
 
+private fun applyOrReapplyRemoteViews(frame: FrameLayout, notification: Notification): Boolean {
+    val rv =
+        try {
+            resolveRemoteViews(frame.context, notification)
+        } catch (_: Exception) {
+            return false
+        } ?: return false
+    val existing = if (frame.childCount > 0) frame.getChildAt(0) else null
+    if (existing != null) {
+        try {
+            rv.reapply(frame.context, existing)
+            prepareForIsland(existing)
+            return true
+        } catch (_: Exception) {
+            frame.removeAllViews()
+        }
+    }
+    return try {
+        val inflated = rv.apply(frame.context, frame)
+        prepareForIsland(inflated)
+        frame.addView(
+            inflated,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
+
 @Composable
 private fun SbnContentView(sbn: StatusBarNotification, fallback: @Composable () -> Unit) {
     var failed by remember(sbn.key) { mutableStateOf(false) }
-    if (!failed) {
-        key(sbn.key) {
-            AndroidView(
-                factory = { ctx ->
-                    FrameLayout(ctx).apply {
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        try {
-                            val rv = resolveRemoteViews(ctx, sbn.notification)
-                            val inflated = rv?.apply(ctx, this)
-                            if (inflated != null) {
-                                prepareForIsland(inflated)
-                                addView(
-                                    inflated,
-                                    FrameLayout.LayoutParams(
-                                        FrameLayout.LayoutParams.MATCH_PARENT,
-                                        FrameLayout.LayoutParams.WRAP_CONTENT,
-                                    ),
-                                )
-                            } else {
-                                failed = true
-                            }
-                        } catch (_: Exception) {
-                            failed = true
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().clip(ShapeIconMedium),
-            )
-        }
-    } else {
+    if (failed) {
         fallback()
+        return
     }
+    AndroidView(
+        factory = { ctx ->
+            FrameLayout(ctx).apply {
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            }
+        },
+        update = { frame ->
+            val notification = sbn.notification
+            if (notification == null || !applyOrReapplyRemoteViews(frame, notification)) {
+                failed = true
+            }
+        },
+        modifier = Modifier.fillMaxWidth().clip(ShapeIconMedium),
+    )
 }
 
 private val COLLAPSE_CHIP_IDS = arrayOf("expand_button_touch_container", "expand_button")
@@ -149,63 +167,110 @@ private fun PromotedOngoingFallback(
     interactor: IslandActions,
 ) {
     val context = LocalContext.current
+    val tone = toneFor(event)
+    val tint = tone.tint
+    val usableActions =
+        remember(event.actions) {
+            event.actions
+                .filter { action ->
+                    val label = action.label.toString().lowercase()
+                    label != "collapse" && label != "expand" && label != "minimize"
+                }
+                .take(MAX_INLINE_ACTIONS)
+        }
+    val inline = rememberActionsFitInline(usableActions.map { it.action })
+    val hasProgress = event.progress >= 0f || event.isIndeterminate
+
+    val actionButtons: @Composable () -> Unit = {
+        usableActions.forEach { notifAction ->
+            NotificationActionButton(
+                action = notifAction.action,
+                label = notifAction.label.toString(),
+                tone = tone,
+            ) {
+                try {
+                    notifAction.action.actionIntent?.sendWithBal(context)
+                } catch (_: Exception) {}
+                interactor.collapseIsland()
+            }
+        }
+    }
+
     ExpandedCardLayout(
-        accentColor = BlueAccent,
-        iconSize = SizeButtonLg,
+        accentColor = tint,
         iconBackground = false,
         icon = {
             event.appIcon?.let { icon ->
                 Image(
-                    bitmap = icon.toScaledBitmap(SizeButtonLg),
+                    bitmap = icon.toScaledBitmap(SizeIconBadge),
                     contentDescription = null,
-                    modifier = Modifier.size(SizeButtonLg).clip(ShapeIconLarge),
+                    modifier = Modifier.size(SizeIconBadge).clip(ShapeCompact),
                     contentScale = ContentScale.Crop,
                 )
-            } ?: PulsingDot(color = BlueAccent, size = 10.dp)
+            } ?: PulsingDot(color = tint, size = 10.dp)
         },
         title = {
-            Text(event.title.ifEmpty { event.appName }, color = OnCardText, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (event.text.isNotEmpty()) {
-                Text(event.text, color = SubtleGray, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            if (event.shortText.isNotEmpty()) {
-                StatusChip(event.shortText, BlueAccent)
+            Text(
+                event.title.ifEmpty { event.appName },
+                color = OnCardText,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Text and short status share the caption line.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(SpaceSm),
+            ) {
+                if (event.shortText.isNotEmpty()) {
+                    StatusChip(event.shortText, tint)
+                }
+                if (event.text.isNotEmpty()) {
+                    Text(
+                        event.text,
+                        color = SubtleGray,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         },
-        actions = {
-            if (event.progress >= 0f || event.isIndeterminate) {
-                LinearWavyProgressIndicator(
-                    progress = { if (event.isIndeterminate) 0f else event.progress },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = BlueAccent,
-                    trackColor = BlueAccent.copy(alpha = 0.20f),
-                )
-            }
-            val usableActions =
-                event.actions.filter { action ->
-                    val label = action.label.toString().lowercase()
-                    label != "collapse" && label != "expand" && label != "minimize"
-                }
-            if (usableActions.isNotEmpty()) {
+        trailing = if (inline && usableActions.isNotEmpty()) {
+            {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(SpaceLg),
-                ) {
-                    usableActions.take(2).forEach { notifAction ->
-                        ActionChip(
-                            label = notifAction.label.toString(),
-                            modifier = Modifier.weight(1f),
-                            onClick = {
-                                try {
-                                    notifAction.action.actionIntent?.sendWithBal(context)
-                                } catch (_: Exception) {}
-                                interactor.collapseIsland()
-                            },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(SpaceSm),
+                ) { actionButtons() }
+            }
+        } else null,
+        actions = if (hasProgress || (!inline && usableActions.isNotEmpty())) {
+            {
+                if (hasProgress) {
+                    if (event.isIndeterminate) {
+                        // The determinate overload pinned at 0 drew an empty bar for "working…".
+                        LinearWavyProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = tint,
+                            trackColor = tint.copy(alpha = AlphaTrack),
+                        )
+                    } else {
+                        LinearWavyProgressIndicator(
+                            progress = { event.progress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = tint,
+                            trackColor = tint.copy(alpha = AlphaTrack),
                         )
                     }
                 }
+                if (!inline && usableActions.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(SpaceSm),
+                    ) { actionButtons() }
+                }
             }
-        },
+        } else null,
     )
 }
 
@@ -221,10 +286,10 @@ internal fun RowScope.CompactPromotedOngoingRow(event: IslandEvent.PromotedOngoi
     }
         ?: Box(
             modifier =
-                Modifier.size(SizeCompactIcon).clip(ShapeCompact).background(BlueAccent.copy(alpha = AlphaIconBg)),
+                Modifier.size(SizeCompactIcon).clip(ShapeCompact).background(IslandTone.ACCENT.tint.copy(alpha = AlphaIconBg)),
             contentAlignment = Alignment.Center,
         ) {
-            PulsingDot(color = BlueAccent, size = SpaceMd)
+            PulsingDot(color = IslandTone.ACCENT.tint, size = SpaceMd)
         }
     Spacer(Modifier.width(SpaceLg))
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SpaceXxs)) {
@@ -240,7 +305,7 @@ internal fun RowScope.CompactPromotedOngoingRow(event: IslandEvent.PromotedOngoi
             else ""
         }
         if (subLabel.isNotEmpty()) {
-            Text(subLabel, color = BlueAccent, style = MaterialTheme.typography.labelSmall)
+            Text(subLabel, color = IslandTone.ACCENT.tint, style = MaterialTheme.typography.labelSmall)
         }
     }
 }

@@ -11,7 +11,7 @@ import com.android.systemui.axdynamicbar.data.source.SmartspaceIslandManager
 import com.android.systemui.axdynamicbar.data.source.SystemIslandManager
 import com.android.systemui.axdynamicbar.data.source.TorchIslandManager
 import com.android.systemui.axdynamicbar.domain.AxDynamicBarSettings
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.dagger.SysUISingleton
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -61,25 +61,18 @@ constructor(
 
     private val disabled get() = settings.disabledEventTypes.value
 
-    private fun isTypeEnabled(typeId: String): Boolean = typeId !in disabled
+    private fun isTypeEnabled(typeId: String): Boolean =
+        settings.isEnabled.value && typeId !in disabled
+
+    private fun isMediaSourceNeeded(): Boolean =
+        isTypeEnabled("media") || settings.isKeyguardMusicPillEnabled.value
 
     fun startListening() {
-        if (listenersStarted) return
-        listenersStarted = true
-        Log.d(TAG, "Starting event listeners")
-        syncDisabledTypes()
-        if (isTypeEnabled("media")) media.startListening()
-        if (isTypeEnabled("bluetooth")) connectivity.startBluetooth()
-        if (isTypeEnabled("hotspot")) connectivity.startHotspot()
-        if (isTypeEnabled("vpn")) connectivity.startVpn()
-        if (isTypeEnabled("charging")) system.startCharging()
-        if (isTypeEnabled("ringer")) system.startRinger()
-        if (isTypeEnabled("clipboard")) system.startClipboard()
-        notification.startListening()
-        if (isTypeEnabled("app_switch")) appTracking.startListening()
-        if (isTypeEnabled("torch")) torch.startListening()
-        if (isTypeEnabled("biometric_unlock")) biometric.startListening()
-        if (isTypeEnabled("media") || isTypeEnabled("sports")) smartspace.startListening()
+        if (!listenersStarted) {
+            listenersStarted = true
+            Log.d(TAG, "Starting event listeners")
+        }
+        refreshListeners()
     }
 
     fun stopListening() {
@@ -100,8 +93,11 @@ constructor(
         if (!listenersStarted) return
         syncDisabledTypes()
 
-        if (isTypeEnabled("media")) media.startListening()
+        if (isMediaSourceNeeded()) media.startListening()
         else media.stopListening()
+
+        if (settings.isEnabled.value) notification.startListening()
+        else notification.stopListening()
 
         if (isTypeEnabled("bluetooth")) connectivity.startBluetooth()
         else connectivity.stopBluetooth()
@@ -152,8 +148,12 @@ constructor(
         ) { promoted, sports ->
             (if (isTypeEnabled("promoted_ongoing")) promoted else emptyList()) + sports
         }
-        val highGroup =
-            combine(torch.torchEvent, biometric.biometricEvent) { t, bio ->
+        val highGroup = combine(
+            notification.callEvents,
+            torch.torchEvent,
+            biometric.biometricEvent
+        ) { call, t, bio ->
+                (if (isTypeEnabled("call")) call else emptyList()) +
                 listOfNotNull(
                     t?.takeIf { isTypeEnabled("torch") },
                     bio?.takeIf { isTypeEnabled("biometric_unlock") },
@@ -168,7 +168,7 @@ constructor(
                 notification.alarmEvent,
             ) { m, bt, hotspot, charging, alarm ->
                 listOfNotNull(
-                    m?.takeIf { isTypeEnabled("media") },
+                    m?.takeIf { isMediaSourceNeeded() },
                     bt?.takeIf { isTypeEnabled("bluetooth") },
                     hotspot?.takeIf { isTypeEnabled("hotspot") },
                     charging?.takeIf { isTypeEnabled("charging") },

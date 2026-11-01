@@ -1,6 +1,7 @@
 package com.android.systemui.axdynamicbar.ui.compose
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.border
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -36,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,8 +66,10 @@ import androidx.compose.ui.unit.dp
 import android.graphics.drawable.Drawable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.res.stringResource
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.axdynamicbar.shared.AlphaIconBg
+import com.android.systemui.axdynamicbar.shared.AlphaGlass
+import com.android.systemui.axdynamicbar.shared.islandBlur
 import com.android.systemui.axdynamicbar.shared.AlphaSecondary
 import com.android.systemui.axdynamicbar.shared.AlphaTertiary
 import com.android.systemui.axdynamicbar.shared.PillPrimary
@@ -78,8 +80,8 @@ import com.android.systemui.axdynamicbar.shared.SpaceMd
 import com.android.systemui.axdynamicbar.shared.SpaceSm
 import com.android.systemui.axdynamicbar.shared.SpaceXs
 import com.android.systemui.axdynamicbar.shared.TsBadge
-import com.android.systemui.axdynamicbar.shared.chipAccentColorFor
-import com.android.systemui.axdynamicbar.shared.chipContentColorOn
+import com.android.systemui.axdynamicbar.shared.islandChipColorFor
+import com.android.systemui.axdynamicbar.shared.islandChipContentColorFor
 import com.android.systemui.axdynamicbar.shared.chipProgressFor
 import com.android.systemui.axdynamicbar.shared.textKeyFor
 import com.android.systemui.axdynamicbar.shared.toScaledBitmap
@@ -105,8 +107,18 @@ fun AxDynamicBarChip(
     val isOnKeyguard by viewModel.isOnKeyguard.collectAsStateWithLifecycle()
     val keyguardCarrier by viewModel.keyguardCarrierText.collectAsStateWithLifecycle()
     val chipStyle by viewModel.chipStyle.collectAsStateWithLifecycle()
+    val isMediaEventTypeEnabled by viewModel.isMediaEventTypeEnabled.collectAsStateWithLifecycle()
 
     var toggleCount by remember { mutableIntStateOf(0) }
+
+    val displayEvent: IslandEvent? = state?.let { chipState ->
+        val raw = chipState.notificationAlert ?: chipState.event
+        when {
+            isMediaEventTypeEnabled -> raw
+            raw is IslandEvent.Media -> chipState.allEvents.firstOrNull { it !is IslandEvent.Media }
+            else -> raw
+        }
+    }
     
     val carrierName = if (isOnKeyguard && ignoreKeyguard) keyguardCarrier.takeIf { it.isNotBlank() } else null
     val chipTextMaxWidth = dimensionResource(R.dimen.ongoing_activity_chip_max_text_width)
@@ -115,13 +127,15 @@ fun AxDynamicBarChip(
     }
 
     val touchSlop = LocalViewConfiguration.current.touchSlop
+    val longPressTimeoutMillis = LocalViewConfiguration.current.longPressTimeoutMillis
+    val currentDisplayEvent = rememberUpdatedState(displayEvent)
     val expandableController = rememberExpandableController(color = Color.Transparent, shape = ChipShape)
     var currentExpandable by remember { mutableStateOf<SystemUiExpandable?>(null) }
 
     val motionScheme = MaterialTheme.motionScheme
 
     AnimatedVisibility(
-        visible = state != null && (ignoreKeyguard || !isOnKeyguard),
+        visible = state != null && displayEvent != null && (ignoreKeyguard || !isOnKeyguard),
         enter = fadeIn(motionScheme.defaultEffectsSpec()) + scaleIn(initialScale = 0.8f, animationSpec = motionScheme.defaultSpatialSpec()),
         exit = fadeOut(motionScheme.fastEffectsSpec()) + scaleOut(targetScale = 0.8f, animationSpec = motionScheme.fastSpatialSpec()),
         modifier = modifier
@@ -130,52 +144,67 @@ fun AxDynamicBarChip(
             .pointerInput(viewModel) {
                 awaitEachGesture {
                     val down = awaitFirstDown(pass = PointerEventPass.Initial)
-                    
+
                     val startX = down.position.x
                     val startY = down.position.y
                     var dragging = false
                     var totalDx = 0f
-                    var decided = false 
+                    var decided = false
+                    var longPressTriggered = false
+
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val change = event.changes.firstOrNull() ?: break
+                        val dx = change.position.x - startX
+                        val dy = change.position.y - startY
+                        if (currentDisplayEvent.value is IslandEvent.AppSwitch &&
+                            !longPressTriggered &&
+                            !decided &&
+                            abs(dx) <= touchSlop &&
+                            abs(dy) <= touchSlop &&
+                            change.uptimeMillis - down.uptimeMillis >= longPressTimeoutMillis
+                        ) {
+                            longPressTriggered = true
+                            viewModel.statusBarExpansion.expand()
+                        }
                         if (!change.pressed) {
-                            
                             if (dragging) {
                                 change.consume()
                                 if (totalDx > 0) viewModel.cyclePrev()
                                 else viewModel.cycleNext()
                             } else if (!decided) {
-
                                 change.consume()
-                                val wasExpanded = viewModel.statusBarExpansion.isExpanded.value
-                                val current = state?.event
-                                if (current is IslandEvent.AospChip) {
-                                    val expandable = currentExpandable
-                                    if (expandable == null ||
-                                        !viewModel.handleAospChipTap(current, expandable)) {
-                                        viewModel.statusBarExpansion.toggle()
-                                        if (!wasExpanded) toggleCount++
+                                if (!longPressTriggered && viewModel.chipTapClosesPanel(down.uptimeMillis)) {
+                                    viewModel.statusBarExpansion.collapse()
+                                } else if (!longPressTriggered) {
+                                    val current = currentDisplayEvent.value
+                                    if (current is IslandEvent.AppSwitch) {
+                                        viewModel.switchToPreviousApp(current)
+                                    } else if (current is IslandEvent.AospChip) {
+                                        val expandable = currentExpandable
+                                        if (expandable == null ||
+                                            !viewModel.handleAospChipTap(current, expandable)) {
+                                            viewModel.statusBarExpansion.expand()
+                                            toggleCount++
+                                        }
+                                    } else {
+                                        viewModel.statusBarExpansion.expand()
+                                        toggleCount++
                                     }
-                                } else {
-                                    viewModel.statusBarExpansion.toggle()
-                                    if (!wasExpanded) toggleCount++
                                 }
                             }
-                            
                             break
                         }
-                        val dx = change.position.x - startX
-                        val dy = change.position.y - startY
-                        if (!decided && (abs(dx) > touchSlop || abs(dy) > touchSlop)) {
+
+                        if (!longPressTriggered && !decided &&
+                            (abs(dx) > touchSlop || abs(dy) > touchSlop)
+                        ) {
                             if (abs(dx) >= abs(dy)) {
-                                
                                 decided = true
                                 dragging = true
                                 totalDx = dx
                                 change.consume()
                             } else {
-                                
                                 decided = true
                                 break
                             }
@@ -195,8 +224,9 @@ fun AxDynamicBarChip(
             },
     ) {
         state?.let { chipState ->
-            val displayEvent = chipState.event
-            val isAlert = false
+            val isAlert = chipState.notificationAlert != null
+
+            val event = displayEvent ?: return@let
 
             Expandable(
                 controller = expandableController,
@@ -225,11 +255,15 @@ fun AxDynamicBarChip(
                     label = "chip_event",
                 ) {
                     val event = displayEvent
-                    val rawAccent = chipAccentColorFor(event)
+                    val rawAccent = islandChipColorFor(event)
                     val accent by animateColorAsState(rawAccent, MaterialTheme.motionScheme.fastEffectsSpec(), label = "accent")
                     val contentColor by animateColorAsState(
-                        chipContentColorOn(rawAccent), MaterialTheme.motionScheme.fastEffectsSpec(), label = "content",
+                        islandChipContentColorFor(event), MaterialTheme.motionScheme.fastEffectsSpec(), label = "content",
                     )
+                    val statusBarEventCount = remember(chipState.allEvents, isMediaEventTypeEnabled) {
+                        if (isMediaEventTypeEnabled) chipState.eventCount
+                        else chipState.allEvents.count { it !is IslandEvent.Media }
+                    }
                 val useCircleStyle = chipStyle == 1 &&
                         !isAlert &&
                         event !is IslandEvent.AudioRecording &&
@@ -249,7 +283,15 @@ fun AxDynamicBarChip(
                             accent = accent,
                             contentColor = contentColor,
                             progress = progress,
-                            modifier = Modifier.squishAnimation(toggleCount),
+                            modifier = Modifier
+                                .squishAnimation(toggleCount)
+                                .clip(CircleShape)
+                                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), CircleShape)
+                                .islandBlur(
+                                    cornerRadius = 14.dp,
+                                    fallbackColor = accent,
+                                )
+                                .background(accent.copy(alpha = AlphaGlass)),
                         )
                     }
                 } else {
@@ -261,9 +303,14 @@ fun AxDynamicBarChip(
                         modifier =
                             Modifier.height(ChipHeight)
                                 .widthIn(max = 100.dp)
-                                .clip(ChipShape)
                                 .squishAnimation(toggleCount)
-                                .background(accent)
+                                .clip(ChipShape)
+                                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), ChipShape)
+                                .islandBlur(
+                                    cornerRadius = ChipHeight / 2,
+                                    fallbackColor = accent,
+                                )
+                                .background(accent.copy(alpha = AlphaGlass))
                                 .then(
                                     if (progress != null) {
                                         val trackColor = lerp(accent, contentColor, 0.2f)
@@ -358,7 +405,7 @@ fun AxDynamicBarChip(
                                 },
                                 label = "chip_icon",
                             ) {
-                                PillEventIcon(event, tint = contentColor, animated = false)
+                                IslandPillEventIcon(event, tint = contentColor, animated = false)
                             }
                             Spacer(Modifier.width(SpaceXs))
                             AnimatedContent(
@@ -377,7 +424,7 @@ fun AxDynamicBarChip(
                                     overrideColor = contentColor,
                                 )
                             }
-                            if (chipState.eventCount > 1) {
+                            if (statusBarEventCount > 1) {
                                 Spacer(Modifier.width(SpaceXs))
                                 Box(
                                     contentAlignment = Alignment.Center,
@@ -391,7 +438,7 @@ fun AxDynamicBarChip(
                                         .padding(horizontal = 3.dp),
                                 ) {
                                     Text(
-                                        text = "${chipState.eventCount}",
+                                        text = "$statusBarEventCount",
                                         style = TsBadge,
                                         color = contentColor,
                                         maxLines = 1,

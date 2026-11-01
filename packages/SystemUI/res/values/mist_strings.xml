@@ -221,6 +221,10 @@
     <string name="ax_dynamic_bar_until_full">until full</string>
     <string name="ax_dynamic_bar_battery_saver">Battery Saver</string>
     <string name="ax_dynamic_bar_incoming_call">Incoming Call</string>
+    <string name="ax_dynamic_bar_call">Call</string>
+    <string name="ax_dynamic_bar_left_earbud">Left earbud</string>
+    <string name="ax_dynamic_bar_right_earbud">Right earbud</string>
+    <string name="ax_dynamic_bar_earbuds_case">Case</string>
     <string name="ax_dynamic_bar_connected">Connected</string>
     <string name="ax_dynamic_bar_disconnect">Disconnect</string>
     <string name="ax_dynamic_bar_no_devices">No devices</string>

@@ -1,11 +1,13 @@
 package com.android.systemui.axdynamicbar.domain
 
+import android.app.Notification
+import android.media.AudioManager
 import android.net.Uri
 import com.android.systemui.axdynamicbar.data.IslandEventRepository
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.axdynamicbar.model.IslandState
 import com.android.systemui.axdynamicbar.model.IslandUiState
-import com.android.systemui.axdynamicbar.model.RecordingState
+import com.android.systemui.islandevents.model.RecordingState
 import com.android.systemui.axdynamicbar.shared.IslandActions
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
@@ -18,6 +20,8 @@ import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.statusbar.KeyguardIndicationController
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.statusbar.policy.ZenModeController
+import com.android.systemui.util.settings.GlobalSettings
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -45,11 +49,15 @@ constructor(
     private val indicationController: KeyguardIndicationController,
     private val shadeInteractor: ShadeInteractor,
     private val shadeRepository: ShadeRepository,
+    private val zenModeController: ZenModeController,
+    private val globalSettings: GlobalSettings,
+    private val audioManager: AudioManager,
 ) : IslandActions {
     private val _uiState = MutableStateFlow(IslandUiState())
     val uiState: StateFlow<IslandUiState> = _uiState.asStateFlow()
 
     private val autoDismissJobs = ConcurrentHashMap<String, Job>()
+    @Volatile private var notifAlertJob: Job? = null
 
     private val dismissedEventIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
@@ -86,6 +94,14 @@ constructor(
 
     companion object {
         private const val TAG = "AxDynamicBarInteractor"
+        private const val NOTIF_ALERT_DURATION_MS = 4500L
+
+        private fun IslandEvent.Notification.isActiveCall(): Boolean {
+            val extras = sbn.notification?.extras ?: return false
+            return extras.containsKey(Notification.EXTRA_ANSWER_INTENT) ||
+                extras.containsKey(Notification.EXTRA_DECLINE_INTENT) ||
+                extras.containsKey(Notification.EXTRA_HANG_UP_INTENT)
+        }
     }
 
     fun init() {
@@ -118,6 +134,14 @@ constructor(
         applicationScope.launch {
             repository.notification.notificationFlow.collect { notification ->
                 repository.notification.coalesceNotification(notification)
+                showNotificationAlert(notification)
+            }
+        }
+
+        applicationScope.launch {
+            repository.notification.notificationRemovedFlow.collect { key ->
+                val alert = _uiState.value.notificationAlert ?: return@collect
+                if (alert.sbn.key == key) dismissNotificationAlert()
             }
         }
 
@@ -199,8 +223,15 @@ constructor(
         }
 
         applicationScope.launch {
-            settings.isEnabled.collect { enabled ->
-                if (enabled) repository.startListening()
+            combine(
+                settings.isEnabled,
+                settings.isKeyguardMusicPillEnabled,
+                settings.disabledEventTypes,
+            ) { enabled, pillEnabled, _ ->
+                enabled to pillEnabled
+            }.collect { (enabled, pillEnabled) ->
+                if (!enabled) dismissNotificationAlert()
+                if (enabled || pillEnabled) repository.startListening()
                 else {
                     repository.stopListening()
                     autoDismissJobs.values.forEach { it.cancel() }
@@ -213,8 +244,8 @@ constructor(
         }
 
         applicationScope.launch {
-            settings.disabledEventTypes.collect {
-                repository.refreshListeners()
+            settings.isHeadsUpEnabled.collect { enabled ->
+                if (!enabled) dismissNotificationAlert()
             }
         }
 
@@ -222,11 +253,21 @@ constructor(
             combine(
                 repository.events,
                 settings.disabledEventTypes,
+                combine(settings.isEnabled, settings.isKeyguardEnabled) { enabled, kgEnabled ->
+                    enabled to kgEnabled
+                },
+                settings.isKeyguardMusicPillEnabled,
                 _isOnKeyguard,
-            ) { raw, _, kg ->
-                raw.filter { settings.isEventEnabled(it) } to kg
+            ) { raw, _, (enabled, kgEnabled), pillEnabled, kg ->
+                raw.filter { e ->
+                    if (kg && e is IslandEvent.Media) {
+                        // The lock screen music pill has its own switch and event source.
+                        pillEnabled
+                    } else {
+                        enabled && (!kg || kgEnabled) && settings.isEventEnabled(e)
+                    }
+                } to kg
             }.collect { (rawEvents, onKeyguard) ->
-                if (!settings.isEnabled.value) return@collect
                 dismissedEventIds.removeAll { id -> rawEvents.none { it.id == id } }
                 val events = rawEvents.filter { e ->
                     e.id !in dismissedEventIds &&
@@ -237,8 +278,6 @@ constructor(
                         
                         !(onKeyguard && e is IslandEvent.AppSwitch) &&
                         
-                        !(onKeyguard && e is IslandEvent.Clipboard) &&
-
                         !(!onKeyguard && e is IslandEvent.KeyguardIndication)
                 }
 
@@ -307,6 +346,7 @@ constructor(
                         pinnedEventIndex = pinnedIndex,
                         manuallyHidden = if (shouldReset) false else current.manuallyHidden,
                         forceVisible = false,
+                        notificationAlert = current.notificationAlert,
                     )
             }
         }
@@ -366,6 +406,7 @@ constructor(
             is IslandEvent.Hotspot -> repository.connectivity.clearHotspot()
             is IslandEvent.Charging -> repository.system.clearCharging()
             is IslandEvent.Alarm -> repository.notification.clearAlarm()
+            is IslandEvent.Call -> repository.notification.clearCall(event.sbn.key)
             is IslandEvent.Timer -> repository.notification.clearTimer()
             is IslandEvent.Stopwatch -> repository.notification.clearStopwatch()
             is IslandEvent.RingerMode -> repository.system.clearRinger()
@@ -399,6 +440,74 @@ constructor(
     override fun onNotificationInteractionEnd(eventId: String) {
         val event = _uiState.value.events.find { it.id == eventId } ?: return
         scheduleAutoDismiss(event)
+    }
+
+    override fun onNotificationAlertInteractionStart() {
+        notifAlertJob?.cancel()
+        notifAlertJob = null
+    }
+
+    override fun onNotificationAlertInteractionEnd() {
+        val current = _uiState.value
+        val alert = current.notificationAlert ?: return
+        if (alert.isActiveCall()) return
+        notifAlertJob = applicationScope.launch {
+            delay(NOTIF_ALERT_DURATION_MS)
+            dismissNotificationAlert()
+        }
+    }
+
+    fun dismissNotificationAlert() {
+        notifAlertJob?.cancel()
+        notifAlertJob = null
+        val current = _uiState.value
+        if (current.notificationAlert != null) {
+            _uiState.value = current.copy(notificationAlert = null)
+        }
+    }
+
+    private fun shouldSuppressForDndOrRinger(notification: IslandEvent.Notification): Boolean =
+        com.android.systemui.islandevents.domain.NotificationAlertPolicy.shouldSuppress(
+            notification,
+            enabled = settings.isHeadsUpEnabled.value,
+            zenMode = zenModeController.zen,
+            ringerMode = audioManager.ringerMode,
+        )
+
+    private fun showNotificationAlert(
+        notification: IslandEvent.Notification,
+    ) {
+        if (!settings.isEnabled.value) return
+        if (panelBlocking || statusBlocking || _isOnKeyguard.value) return
+        if (shouldSuppressForDndOrRinger(notification)) return
+        val current = _uiState.value
+        val existingAlert = current.notificationAlert
+        if (existingAlert != null &&
+            existingAlert.isActiveCall() &&
+            !notification.isActiveCall()
+        ) return
+
+        val hasProgress = notification.progress >= 0 || notification.isProgressIndeterminate
+        val isSameKey = existingAlert != null && existingAlert.sbn.key == notification.sbn.key
+
+        if (isSameKey && hasProgress) {
+            _uiState.value = current.copy(notificationAlert = notification)
+            return
+        }
+
+        notifAlertJob?.cancel()
+        _uiState.value = current.copy(notificationAlert = notification)
+
+        if (hasProgress) return
+
+        val duration =
+            if (!notification.isActiveCall()) NOTIF_ALERT_DURATION_MS else null
+        if (duration != null) {
+            notifAlertJob = applicationScope.launch {
+                delay(duration)
+                dismissNotificationAlert()
+            }
+        }
     }
 
     override fun togglePlayPause() = repository.media.togglePlayPause()
@@ -440,11 +549,23 @@ constructor(
 
     override fun switchToApp(taskId: Int) = repository.appTracking.switchToApp(taskId)
 
+    fun switchToPreviousApp(event: IslandEvent.AppSwitch) {
+        val previousApp = event.previousApp ?: return
+        val currentApp = event.recentApps.firstOrNull()
+        if (previousApp.taskId < 0 || previousApp.taskId == currentApp?.taskId ||
+            previousApp.packageName == currentApp?.packageName
+        ) {
+            return
+        }
+        repository.appTracking.switchToApp(previousApp.taskId)
+    }
+
     override fun killApp(taskId: Int) = repository.appTracking.killApp(taskId)
 
     fun onPanelExpandedChanged(expanded: Boolean) {
         panelBlocking = expanded
         _isPanelExpanded.value = expanded
+        if (expanded) dismissNotificationAlert()
         updateChipVisibility()
     }
 

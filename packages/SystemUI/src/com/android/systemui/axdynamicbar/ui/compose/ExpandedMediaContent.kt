@@ -65,14 +65,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.android.systemui.axdynamicbar.shared.IslandActions
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.axdynamicbar.shared.*
 import com.android.systemui.media.controls.shared.MediaSeekBarStyle
-import com.android.systemui.media.controls.ui.composable.StyledMediaSeekBar
 import com.android.systemui.media.controls.ui.drawable.SquigglyProgress
 import com.android.systemui.res.R
 import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.systemui.media.controls.ui.composable.StyledMediaSeekBar
 import com.android.systemui.media.controls.ui.view.WaveformSeekBar
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -392,13 +392,13 @@ private fun MediaSeekBar(
     accent: Color,
     seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
 ) {
+    val mediaProgress = rememberMediaProgress(event)
     val seekBarHeight =
         if (
             seekBarStyle == MediaSeekBarStyle.GLOWING ||
                 seekBarStyle == MediaSeekBarStyle.GRADIENT_WAVE ||
                 seekBarStyle == MediaSeekBarStyle.COS
         ) 34.dp else SeekBarHeight
-    val mediaProgress = rememberMediaProgress(event)
     val isPlaying = event.isPlaying
     val durationMs = event.duration
     val positionMs = mediaProgress.positionMs

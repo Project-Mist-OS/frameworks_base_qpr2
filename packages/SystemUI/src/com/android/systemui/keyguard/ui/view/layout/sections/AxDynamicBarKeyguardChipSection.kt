@@ -10,14 +10,14 @@ import androidx.constraintlayout.widget.ConstraintSet
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.compose.theme.PlatformTheme
-import com.android.systemui.axdynamicbar.model.IslandEvent
+import com.android.internal.policy.SystemBarUtils
+import com.android.systemui.islandevents.model.IslandEvent
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel
 import com.android.systemui.axdynamicbar.ui.compose.AxDynamicBarKeyguardChip
 import com.android.systemui.keyguard.domain.interactor.KeyguardClockInteractor
 import com.android.systemui.keyguard.shared.model.ClockSize
 import com.android.systemui.keyguard.shared.model.KeyguardSection
 import com.android.systemui.lifecycle.repeatWhenAttached
-import com.android.systemui.plugins.keyguard.ui.clocks.ClockViewIds
 import com.android.systemui.res.R
 import com.android.systemui.media.MediaViewController
 import com.android.systemui.shade.ShadeDisplayAware
@@ -32,13 +32,23 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 private const val CHIP_ABOVE_LOCK_MARGIN_DP = 12f
+private const val EXPANDED_TOP_PROTECTION_DP = 16f
 private const val EXPANDED_BOTTOM_PROTECTION_DP = 16f
 private const val UNSET = -1
+
+private const val HIDDEN_VIEWS_FADE_DURATION_START_MS = 50L
+private const val HIDDEN_VIEWS_FADE_DURATION_END_MS = 250L
 
 private fun extraBottomMarginPx(context: Context): Int =
     context.resources.getDimensionPixelSize(R.dimen.ax_dynamic_bar_keyguard_chip_extra_bottom_margin)
 
 private val HIDDEN_VIEW_IDS = listOf(
+    R.id.keyguard_weather,
+    R.id.default_weather_image,
+    R.id.default_weather_text,
+    R.id.clock_ls,
+    R.id.keyguard_info_widgets,
+    R.id.keyguard_widgets,
     R.id.shared_notification_container,
     R.id.notificationShelf,
     R.id.bc_smartspace_view,
@@ -52,6 +62,9 @@ private val HIDDEN_VIEW_IDS = listOf(
 private fun Float.dpToPx(context: Context): Int =
     (this * context.resources.displayMetrics.density + 0.5f).toInt()
 
+private fun expandedTopMarginPx(context: Context): Int =
+    SystemBarUtils.getStatusBarHeight(context) + EXPANDED_TOP_PROTECTION_DP.dpToPx(context)
+
 class AxDynamicBarKeyguardChipSection
 @Inject
 constructor(
@@ -62,11 +75,21 @@ constructor(
 ) : KeyguardSection() {
 
     private val chipViewId = R.id.ax_dynamic_bar_keyguard_chip
+    private val dismissViewId = R.id.ax_dynamic_bar_keyguard_dismiss_area
     private var bindHandle: DisposableHandle? = null
     private var expansionHandle: DisposableHandle? = null
     private var enforceAction: Runnable? = null
 
     override fun addViews(constraintLayout: ConstraintLayout) {
+        val dismissView = View(context).apply {
+            id = dismissViewId
+            visibility = View.GONE
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            isSoundEffectsEnabled = false
+            setOnClickListener { viewModel.keyguardExpansion.collapse() }
+        }
+        constraintLayout.addView(dismissView, 0)
         val composeView = AxComposeView(context).apply { id = chipViewId }
         constraintLayout.addView(composeView)
     }
@@ -74,9 +97,7 @@ constructor(
     override fun bindData(constraintLayout: ConstraintLayout) {
         val composeView: AxComposeView = constraintLayout.requireViewById(chipViewId)
 
-        if (viewModel.isEnabled.value && viewModel.isKeyguardEnabled.value && viewModel.isOnKeyguard.value) {
-            indicationController.setSuppressIndication(true)
-        }
+        indicationController.setSuppressIndication(viewModel.shouldSuppressKeyguardIndication.value)
 
         composeView.setContent {
             PlatformTheme {
@@ -86,9 +107,9 @@ constructor(
 
         bindHandle = composeView.repeatWhenAttached {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
-                combine(viewModel.isOnKeyguard, viewModel.isEnabled, viewModel.isKeyguardEnabled) { onKg, enabled, kgEnabled ->
-                    onKg && enabled && kgEnabled
-                }.collect { indicationController.setSuppressIndication(it) }
+                viewModel.shouldSuppressKeyguardIndication.collect {
+                    indicationController.setSuppressIndication(it)
+                }
             }
         }
 
@@ -140,6 +161,8 @@ constructor(
         WallpaperDepthUtils.get()?.setDynamicBarExpanded(expanded)
         rebindPreDrawAction(constraintLayout, expanded)
         TransitionManager.endTransitions(constraintLayout)
+        constraintLayout.requireViewById<View>(dismissViewId).visibility =
+            if (expanded) View.VISIBLE else View.GONE
         if (expanded) {
             setHiddenViewsVisibility(constraintLayout, View.INVISIBLE)
             applyExpandedLp(composeView)
@@ -160,10 +183,28 @@ constructor(
 
     private fun setHiddenViewsVisibility(constraintLayout: ConstraintLayout, visibility: Int) {
         hiddenTargets(constraintLayout).forEach { v ->
-            v.alpha = 1f
-            if (v.visibility != visibility) v.visibility = visibility
+            v.animate().cancel()
+            if (visibility == View.VISIBLE) {
+                if (v.visibility != View.VISIBLE) {
+                    v.alpha = 0f
+                    v.visibility = View.VISIBLE
+                }
+                v.animate()
+                    .alpha(1f)
+                    .setDuration(HIDDEN_VIEWS_FADE_DURATION_START_MS)
+                    .withEndAction(null)
+                    .start()
+            } else {
+                v.animate()
+                    .alpha(0f)
+                    .setDuration(HIDDEN_VIEWS_FADE_DURATION_END_MS)
+                    .withEndAction {
+                        if (v.visibility != visibility) v.visibility = visibility
+                    }
+                    .start()
+            }
         }
-         WallpaperDepthUtils.get()?.let {
+        WallpaperDepthUtils.get()?.let {
             if (visibility == View.INVISIBLE) it.hideDepthWallpaper()
             else it.updateDepthWallpaperVisibility()
         }
@@ -184,11 +225,19 @@ constructor(
         val extraBottomPx = extraBottomMarginPx(context)
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         constraintSet.apply {
+            constrainWidth(dismissViewId, ConstraintSet.MATCH_CONSTRAINT)
+            constrainHeight(dismissViewId, ConstraintSet.MATCH_CONSTRAINT)
+            connect(dismissViewId, ConstraintSet.TOP, ConstraintSet.PARENT_ID, ConstraintSet.TOP)
+            connect(dismissViewId, ConstraintSet.BOTTOM, ConstraintSet.PARENT_ID, ConstraintSet.BOTTOM)
+            connect(dismissViewId, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
+            connect(dismissViewId, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
+            setVisibilityMode(dismissViewId, ConstraintSet.VISIBILITY_MODE_IGNORE)
             when {
                 expanded -> {
                     constrainWidth(chipViewId, ConstraintSet.MATCH_CONSTRAINT)
                     constrainHeight(chipViewId, ConstraintSet.MATCH_CONSTRAINT)
-                    connect(chipViewId, ConstraintSet.TOP, ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL, ConstraintSet.BOTTOM)
+                    // The small clock may be hidden or absent with a custom clock style.
+                    connect(chipViewId, ConstraintSet.TOP, ConstraintSet.PARENT_ID, ConstraintSet.TOP, expandedTopMarginPx(context))
                     connect(chipViewId, ConstraintSet.BOTTOM, R.id.device_entry_icon_view, ConstraintSet.TOP, bottomProtectionPx)
                     connect(chipViewId, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START)
                     connect(chipViewId, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END)
@@ -216,13 +265,13 @@ constructor(
         val bottomProtectionPx = EXPANDED_BOTTOM_PROTECTION_DP.dpToPx(context)
         lp.width = ConstraintLayout.LayoutParams.MATCH_PARENT
         lp.height = 0
-        lp.topToBottom = ClockViewIds.LOCKSCREEN_CLOCK_VIEW_SMALL
+        lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
         lp.bottomToTop = R.id.device_entry_icon_view
         lp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
         lp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
-        lp.topMargin = 0
+        lp.topMargin = expandedTopMarginPx(context)
         lp.bottomMargin = bottomProtectionPx
-        lp.topToTop = UNSET
+        lp.topToBottom = UNSET
         lp.bottomToBottom = UNSET
         lp.startToEnd = UNSET
         lp.endToStart = UNSET
@@ -268,6 +317,7 @@ constructor(
         bindHandle?.dispose()
         bindHandle = null
         indicationController.setSuppressIndication(false)
+        constraintLayout.removeView(dismissViewId)
         constraintLayout.removeView(chipViewId)
     }
 }

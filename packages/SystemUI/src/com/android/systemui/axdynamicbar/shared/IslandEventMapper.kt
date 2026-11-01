@@ -38,8 +38,8 @@ import androidx.compose.material.icons.filled.Wifi
 import android.media.AudioManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import com.android.systemui.axdynamicbar.model.IslandEvent
-import com.android.systemui.axdynamicbar.model.RecordingState
+import com.android.systemui.islandevents.model.IslandEvent
+import com.android.systemui.islandevents.model.RecordingState
 import com.android.systemui.res.R
 
 internal data class EventStyle(
@@ -70,6 +70,11 @@ internal fun eventStyleFor(event: IslandEvent): EventStyle = when (event) {
         accent = MediaDefaultAccent,
         icon = Icons.Filled.MusicNote,
         labelRes = R.string.ax_dynamic_bar_music,
+    )
+    is IslandEvent.Call -> EventStyle(
+        accent = GreenAccent,
+        icon = null,
+        labelRes = R.string.ax_dynamic_bar_call,
     )
     is IslandEvent.PromotedOngoing -> EventStyle(
         accent = BlueAccent,
