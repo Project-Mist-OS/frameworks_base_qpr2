@@ -57,6 +57,7 @@ import com.android.server.wm.sandbox.HiddenNotificationController;
 import com.android.server.wm.sandbox.SettingsSpoofController;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -137,6 +138,14 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
         }
     }
 
+    @Override
+    public void onUserStarting(TargetUser user) {
+        final AppControlController controller = mAppControlController;
+        if (controller != null) {
+            controller.loadUser(user.getUserIdentifier());
+        }
+    }
+
     private final class SettingsObserver extends ContentObserver {
         SettingsObserver(Handler handler) {
             super(handler);
@@ -168,51 +177,55 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
             boolean replacing = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false);
             if (replacing) return;
 
-            Slog.i(TAG, "Package removed: " + packageName + ", cleaning up sandbox entries");
-            cleanupPackage(packageName);
+            int uid = intent.getIntExtra(Intent.EXTRA_UID, -1);
+            if (uid < 0) return;
+            int userId = UserHandle.getUserId(uid);
+
+            Slog.i(TAG, "Package removed: " + packageName + " userId=" + userId
+                    + ", cleaning up sandbox entries");
+            cleanupPackage(packageName, userId);
         }
     };
 
-    private void cleanupPackage(String packageName) {
+    private void cleanupPackage(String packageName, int userId) {
         if (mAppControlController == null) return;
 
         boolean changed = false;
 
-        if (mAppControlController.isAppLocked(packageName)) {
-            mAppControlController.removeLockedApp(packageName);
+        if (mAppControlController.isAppLocked(packageName, userId)) {
+            mAppControlController.removeLockedApp(packageName, userId);
             notifyAppLockStateChanged(packageName, false);
             changed = true;
         }
 
-        if (mAppControlController.isPackageHidden(packageName)) {
-            mAppControlController.setPackageHidden(packageName, false);
+        if (mAppControlController.isPackageHidden(packageName, userId)) {
+            mAppControlController.setPackageHidden(packageName, false, userId);
             changed = true;
         }
 
-        if (mAppControlController.isPackageSandboxed(packageName)) {
-            mAppControlController.setPackageSandboxed(packageName, false);
+        if (mAppControlController.isPackageSandboxed(packageName, userId)) {
+            mAppControlController.setPackageSandboxed(packageName, false, userId);
             changed = true;
         }
 
         if (mHiddenNotificationController != null) {
-            mHiddenNotificationController.clearNotificationsForPackage(packageName);
+            mHiddenNotificationController.clearNotificationsForPackage(packageName, userId);
         }
 
-        for (String key : new ArrayList<>(mUnlockedApps)) {
-            if (key.endsWith(":" + packageName)) {
-                mUnlockedApps.remove(key);
-                mUnlockTimestamps.remove(key);
-                cancelTimeoutLock(key);
-            }
+        final String sessionKey = sessionKey(userId, packageName);
+        if (mUnlockedApps.remove(sessionKey)) {
+            mUnlockTimestamps.remove(sessionKey);
+            cancelTimeoutLock(sessionKey);
         }
 
         synchronized (mPendingUnlocks) {
-            mPendingUnlocks.removeIf(key -> key.endsWith(":" + packageName));
-            mPendingTargets.keySet().removeIf(key -> key.endsWith(":" + packageName));
+            mPendingUnlocks.remove(sessionKey);
+            mPendingTargets.remove(sessionKey);
         }
 
         if (changed) {
-            Slog.i(TAG, "Cleaned up sandbox entries for uninstalled package: " + packageName);
+            Slog.i(TAG, "Cleaned up sandbox entries for uninstalled package: " + packageName
+                    + " userId=" + userId);
         }
     }
 
@@ -254,33 +267,25 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
     }
 
     @Override
-    public boolean isAppLocked(String packageName) {
-        return computeAppLockState(packageName, UserHandle.getUserId(Binder.getCallingUid()))
-                .needsAuth();
+    public boolean isAppLocked(String packageName, int userId) {
+        return computeAppLockState(packageName, userId).needsAuth();
     }
 
     @Override
-    public int getAppLockState(String packageName) {
-        return computeAppLockState(packageName, UserHandle.getUserId(Binder.getCallingUid()))
-                .ordinal();
-    }
-
-    @Override
-    public int getAppLockStateForUser(String packageName, int userId) {
+    public int getAppLockState(String packageName, int userId) {
         return computeAppLockState(packageName, userId).ordinal();
     }
 
     @Override
-    public boolean hasAppLock(String packageName) {
-        return computeAppLockState(packageName, UserHandle.getUserId(Binder.getCallingUid()))
-                .hasAppLock();
+    public boolean hasAppLock(String packageName, int userId) {
+        return computeAppLockState(packageName, userId).hasAppLock();
     }
 
     private AppLockState computeAppLockState(String packageName, int userId) {
         if (mAppControlController == null) return NONE;
         if (BLACKLISTED_PACKAGES.contains(packageName)) return NONE;
 
-        boolean isLocked = mAppControlController.isAppLocked(packageName);
+        boolean isLocked = mAppControlController.isAppLocked(packageName, userId);
 
         if (!isLocked) return NONE;
         if (!mKeyguardDone) return LOCKED;
@@ -289,67 +294,65 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
     }
 
     @Override
-    public boolean isPackageHidden(String packageName) {
+    public boolean isPackageHidden(String packageName, int userId) {
         if (mAppControlController == null) return false;
-        return mAppControlController.isPackageHidden(packageName);
+        return mAppControlController.isPackageHidden(packageName, userId);
     }
 
     @Override
-    public boolean isPackageHiddenFromLauncher(String packageName) {
+    public boolean isPackageHiddenFromLauncher(String packageName, int userId) {
         if (mAppControlController == null) return false;
-        return mAppControlController.isPackageHiddenFromLauncher(packageName);
+        return mAppControlController.isPackageHiddenFromLauncher(packageName, userId);
     }
 
     @Override
-    public void addLockedApp(String packageName) {
-        mAppControlController.addLockedApp(packageName);
+    public void addLockedApp(String packageName, int userId) {
+        mAppControlController.addLockedApp(packageName, userId);
         notifyAppLockStateChanged(packageName, true);
     }
 
     @Override
-    public void removeLockedApp(String packageName) {
-        mAppControlController.removeLockedApp(packageName);
-        int uid = getPackageUid(packageName);
-        if (uid >= 0) {
-            int userId = UserHandle.getUserId(uid);
-            markSessionLocked(packageName, userId);
-        }
+    public void removeLockedApp(String packageName, int userId) {
+        mAppControlController.removeLockedApp(packageName, userId);
+        markSessionLocked(packageName, userId);
         notifyAppLockStateChanged(packageName, false);
     }
 
     @Override
-    public void setPackageHidden(String packageName, boolean hidden) {
-        mAppControlController.setPackageHidden(packageName, hidden);
+    public void setPackageHidden(String packageName, boolean hidden, int userId) {
+        mAppControlController.setPackageHidden(packageName, hidden, userId);
     }
 
     @Override
-    public void setPackageHiddenFromLauncher(String packageName, boolean hidden) {
-        mAppControlController.setPackageHiddenFromLauncher(packageName, hidden);
+    public void setPackageHiddenFromLauncher(String packageName, boolean hidden, int userId) {
+        mAppControlController.setPackageHiddenFromLauncher(packageName, hidden, userId);
     }
 
     @Override
-    public List<String> getLockedPackages() {
-        return mAppControlController.getLockedPackages();
+    public List<String> getLockedPackages(int userId) {
+        return mAppControlController.getLockedPackages(userId);
     }
 
     @Override
-    public List<String> getHiddenPackages() {
-        return mAppControlController.getHiddenPackages();
+    public List<String> getHiddenPackages(int userId) {
+        if (mAppControlController == null) return Collections.emptyList();
+        return mAppControlController.getHiddenPackages(userId);
     }
 
     @Override
-    public List<String> getHiddenFromLauncherPackages() {
-        return mAppControlController.getHiddenFromLauncherPackages();
+    public List<String> getHiddenFromLauncherPackages(int userId) {
+        if (mAppControlController == null) return Collections.emptyList();
+        return mAppControlController.getHiddenFromLauncherPackages(userId);
     }
 
     @Override
-    public List<String> getLockablePackages() {
-        return mAppControlController.getLockablePackages();
+    public List<String> getLockablePackages(int userId) {
+        return mAppControlController.getLockablePackages(userId);
     }
 
     @Override
-    public boolean isPackageLockable(String packageName) {
-        return mAppControlController.isPackageLockable(packageName);
+    public boolean isPackageLockable(String packageName, int userId) {
+        return mAppControlController.isPackageLockable(packageName, userId);
     }
 
     @Override
@@ -430,71 +433,72 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
     }
 
     @Override
-    public boolean isPackageSandboxed(String packageName) {
+    public boolean isPackageSandboxed(String packageName, int userId) {
         if (mAppControlController == null) return false;
-        return mAppControlController.isPackageSandboxed(packageName);
+        return mAppControlController.isPackageSandboxed(packageName, userId);
     }
 
     @Override
-    public void addSandboxedPackage(String packageName) {
-        mAppControlController.setPackageSandboxed(packageName, true);
+    public void addSandboxedPackage(String packageName, int userId) {
+        mAppControlController.setPackageSandboxed(packageName, true, userId);
     }
 
     @Override
-    public void removeSandboxedPackage(String packageName) {
-        mAppControlController.setPackageSandboxed(packageName, false);
+    public void removeSandboxedPackage(String packageName, int userId) {
+        mAppControlController.setPackageSandboxed(packageName, false, userId);
     }
 
     @Override
-    public List<String> getSandboxedPackages() {
-        return mAppControlController.getSandboxedPackages();
+    public List<String> getSandboxedPackages(int userId) {
+        return mAppControlController.getSandboxedPackages(userId);
     }
 
     @Override
-    public void setRestrictedGids(String packageName, int[] gids) {
-        mAppControlController.setRestrictedGids(packageName, gids);
+    public void setRestrictedGids(String packageName, int[] gids, int userId) {
+        mAppControlController.setRestrictedGids(packageName, gids, userId);
     }
 
     @Override
-    public int[] getRestrictedGids(String packageName) {
+    public int[] getRestrictedGids(String packageName, int userId) {
         if (mAppControlController == null) return null;
-        return mAppControlController.getRestrictedGids(packageName);
+        return mAppControlController.getRestrictedGids(packageName, userId);
     }
 
     @Override
-    public boolean isSandboxDataIsolationEnabled(String packageName) {
+    public boolean isSandboxDataIsolationEnabled(String packageName, int userId) {
         if (mAppControlController == null) return false;
-        return mAppControlController.isDataIsolationEnabled(packageName);
+        return mAppControlController.isDataIsolationEnabled(packageName, userId);
     }
 
     @Override
-    public void setSandboxDataIsolationEnabled(String packageName, boolean enabled) {
-        mAppControlController.setDataIsolationEnabled(packageName, enabled);
+    public void setSandboxDataIsolationEnabled(String packageName, boolean enabled, int userId) {
+        mAppControlController.setDataIsolationEnabled(packageName, enabled, userId);
     }
 
     @Override
-    public boolean isSpoofSettingEnabled(String packageName, String settingKey) {
+    public boolean isSpoofSettingEnabled(String packageName, String settingKey, int userId) {
         if (mAppControlController == null) return false;
-        return mAppControlController.isSpoofSettingEnabled(packageName, settingKey);
+        return mAppControlController.isSpoofSettingEnabled(packageName, settingKey, userId);
     }
 
     @Override
-    public void setSpoofSettingEnabled(String packageName, String settingKey, boolean enabled) {
-        mAppControlController.setSpoofSettingEnabled(packageName, settingKey, enabled);
+    public void setSpoofSettingEnabled(String packageName, String settingKey, boolean enabled,
+            int userId) {
+        mAppControlController.setSpoofSettingEnabled(packageName, settingKey, enabled, userId);
     }
 
     @Override
-    public List<String> getEnabledSpoofSettings(String packageName) {
-        if (mAppControlController == null) return java.util.Collections.emptyList();
-        return mAppControlController.getEnabledSpoofSettings(packageName);
+    public List<String> getEnabledSpoofSettings(String packageName, int userId) {
+        if (mAppControlController == null) return Collections.emptyList();
+        return mAppControlController.getEnabledSpoofSettings(packageName, userId);
     }
 
     @Override
-    public String getSpoofedSetting(String callingPackage, String settingName) {
+    public String getSpoofedSetting(String callingPackage, String settingName, int userId) {
         if (mAppControlController == null) return null;
         final String spoofedValue = SettingsSpoofController.getSpoofedValue(settingName);
         if (spoofedValue == null) return null;
-        if (!mAppControlController.isSpoofSettingEnabled(callingPackage, settingName)) {
+        if (!mAppControlController.isSpoofSettingEnabled(callingPackage, settingName, userId)) {
             return null;
         }
         return spoofedValue;
@@ -502,7 +506,7 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
 
     @Override
     public boolean isAppLocked(ActivityRecord r) {
-        if (r == null || !hasLockedPackages() || r.isNoDisplay()
+        if (r == null || !hasLockedPackages(r.mUserId) || r.isNoDisplay()
                 || r.isActivityTypeHomeOrRecents()) {
             return false;
         }
@@ -537,7 +541,7 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
 
         int userId = UserHandle.getUserId(uid);
 
-        boolean isLocked = mAppControlController.isAppLocked(packageName);
+        boolean isLocked = mAppControlController.isAppLocked(packageName, userId);
 
         if (!isLocked) return false;
 
@@ -555,7 +559,7 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
 
     @Override
     public void lockTopApp(Task task, String reason) {
-        if (task == null || !hasLockedPackages()) return;
+        if (task == null || !hasLockedPackages(task.mUserId)) return;
 
         ActivityRecord r = task.topRunningActivityLocked();
         if (!isAppLocked(r)) {
@@ -782,7 +786,7 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
                 if (isSandboxActivity(component)) {
                     rti.isTopAppLocked = true;
                 } else {
-                    if (mAppControlController.isAppLocked(packageName)) {
+                    if (mAppControlController.isAppLocked(packageName, userId)) {
                         if (mLockBehavior == LOCK_BEHAVIOR_ON_LEAVE
                                 && mUnlockedApps.contains(sessionKey(userId, packageName))) {
                             rti.isTopAppLocked = false;
@@ -1110,6 +1114,10 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
         return mAppControlController != null && mAppControlController.hasLockedPackages();
     }
 
+    private boolean hasLockedPackages(int userId) {
+        return mAppControlController != null && mAppControlController.hasLockedPackages(userId);
+    }
+
     private void markSessionUnlocked(String packageName, int userId) {
         String key = sessionKey(userId, packageName);
         if (mUnlockedApps.add(key)) {
@@ -1286,15 +1294,6 @@ public final class AxSandboxService extends SystemService implements IAxSandboxS
             Slog.w(TAG, "abortAnimation failed for " + r, e);
         }
         r.abortAndClearOptionsAnimation();
-    }
-
-    private int getPackageUid(String packageName) {
-        try {
-            return mContext.getPackageManager()
-                    .getApplicationInfo(packageName, 0).uid;
-        } catch (PackageManager.NameNotFoundException e) {
-            return -1;
-        }
     }
 
     public boolean isAppLockerActivity(ComponentName componentName) {

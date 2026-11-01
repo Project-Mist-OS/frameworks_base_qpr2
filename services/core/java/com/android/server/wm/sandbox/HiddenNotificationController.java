@@ -26,7 +26,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 
 public class HiddenNotificationController {
     private static final String TAG = "AxSandbox.Notif";
@@ -34,12 +34,12 @@ public class HiddenNotificationController {
     private final RemoteCallbackList<IHiddenNotificationListener> mListeners = new RemoteCallbackList<>();
     private final Map<String, HiddenNotificationInfo> mHiddenNotifications = new HashMap<>();
 
-    private Function<String, Boolean> mIsPackageHidden;
+    private BiFunction<String, Integer, Boolean> mIsPackageHidden;
 
     public HiddenNotificationController() {
     }
 
-    public void setPackageHiddenChecker(Function<String, Boolean> checker) {
+    public void setPackageHiddenChecker(BiFunction<String, Integer, Boolean> checker) {
         mIsPackageHidden = checker;
     }
 
@@ -64,8 +64,9 @@ public class HiddenNotificationController {
     public void onHiddenNotificationPosted(HiddenNotificationInfo info) {
         if (info == null) return;
 
-        if (mIsPackageHidden != null && !mIsPackageHidden.apply(info.packageName)) {
-            Slog.w(TAG, "Rejecting notification from non-hidden package: " + info.packageName);
+        if (mIsPackageHidden != null && !mIsPackageHidden.apply(info.packageName, info.userId)) {
+            Slog.w(TAG, "Rejecting notification from non-hidden package: " + info.packageName
+                    + " userId=" + info.userId);
             return;
         }
 
@@ -102,13 +103,14 @@ public class HiddenNotificationController {
         mListeners.finishBroadcast();
     }
 
-    public void clearNotificationsForPackage(String packageName) {
+    public void clearNotificationsForPackage(String packageName, int userId) {
         if (packageName == null) return;
 
         List<String> keysToRemove = new ArrayList<>();
         synchronized (mHiddenNotifications) {
             for (Map.Entry<String, HiddenNotificationInfo> entry : mHiddenNotifications.entrySet()) {
-                if (packageName.equals(entry.getValue().packageName)) {
+                HiddenNotificationInfo info = entry.getValue();
+                if (packageName.equals(info.packageName) && info.userId == userId) {
                     keysToRemove.add(entry.getKey());
                 }
             }

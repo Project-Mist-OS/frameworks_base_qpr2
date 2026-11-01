@@ -43,48 +43,44 @@ public interface IAxSandboxService {
     default void systemReadyInternal() {
     }
 
-    default boolean isAppLocked(String packageName) {
+    default boolean isAppLocked(String packageName, int userId) {
         return false;
     }
 
-    default int getAppLockState(String packageName) {
+    default int getAppLockState(String packageName, int userId) {
         return 0;
     }
 
-    default int getAppLockStateForUser(String packageName, int userId) {
-        return 0;
-    }
-
-    default boolean hasAppLock(String packageName) {
+    default boolean hasAppLock(String packageName, int userId) {
         return false;
     }
 
-    default boolean isPackageHidden(String packageName) {
+    default boolean isPackageHidden(String packageName, int userId) {
         return false;
     }
 
-    default void addLockedApp(String packageName) {
+    default void addLockedApp(String packageName, int userId) {
     }
 
-    default void removeLockedApp(String packageName) {
+    default void removeLockedApp(String packageName, int userId) {
     }
 
-    default void setPackageHidden(String packageName, boolean hidden) {
+    default void setPackageHidden(String packageName, boolean hidden, int userId) {
     }
 
-    default List<String> getLockedPackages() {
+    default List<String> getLockedPackages(int userId) {
         return Collections.emptyList();
     }
 
-    default List<String> getHiddenPackages() {
+    default List<String> getHiddenPackages(int userId) {
         return Collections.emptyList();
     }
 
-    default List<String> getLockablePackages() {
+    default List<String> getLockablePackages(int userId) {
         return Collections.emptyList();
     }
 
-    default boolean isPackageLockable(String packageName) {
+    default boolean isPackageLockable(String packageName, int userId) {
         return false;
     }
 
@@ -122,46 +118,47 @@ public interface IAxSandboxService {
     default void onHiddenNotificationRemoved(String key) {
     }
 
-    default boolean isPackageSandboxed(String packageName) {
+    default boolean isPackageSandboxed(String packageName, int userId) {
         return false;
     }
 
-    default void addSandboxedPackage(String packageName) {
+    default void addSandboxedPackage(String packageName, int userId) {
     }
 
-    default void removeSandboxedPackage(String packageName) {
+    default void removeSandboxedPackage(String packageName, int userId) {
     }
 
-    default List<String> getSandboxedPackages() {
+    default List<String> getSandboxedPackages(int userId) {
         return Collections.emptyList();
     }
 
-    default void setRestrictedGids(String packageName, int[] gids) {
+    default void setRestrictedGids(String packageName, int[] gids, int userId) {
     }
 
-    default int[] getRestrictedGids(String packageName) {
+    default int[] getRestrictedGids(String packageName, int userId) {
         return null;
     }
 
-    default boolean isSandboxDataIsolationEnabled(String packageName) {
+    default boolean isSandboxDataIsolationEnabled(String packageName, int userId) {
         return false;
     }
 
-    default void setSandboxDataIsolationEnabled(String packageName, boolean enabled) {
+    default void setSandboxDataIsolationEnabled(String packageName, boolean enabled, int userId) {
     }
 
-    default boolean isSpoofSettingEnabled(String packageName, String settingKey) {
+    default boolean isSpoofSettingEnabled(String packageName, String settingKey, int userId) {
         return false;
     }
 
-    default void setSpoofSettingEnabled(String packageName, String settingKey, boolean enabled) {
+    default void setSpoofSettingEnabled(String packageName, String settingKey, boolean enabled,
+            int userId) {
     }
 
-    default List<String> getEnabledSpoofSettings(String packageName) {
+    default List<String> getEnabledSpoofSettings(String packageName, int userId) {
         return Collections.emptyList();
     }
 
-    default String getSpoofedSetting(String callingPackage, String settingName) {
+    default String getSpoofedSetting(String callingPackage, String settingName, int userId) {
         return null;
     }
 
@@ -220,14 +217,14 @@ public interface IAxSandboxService {
     default void onAppDied(String packageName, int userId) {
     }
 
-    default boolean isPackageHiddenFromLauncher(String packageName) {
+    default boolean isPackageHiddenFromLauncher(String packageName, int userId) {
         return false;
     }
 
-    default void setPackageHiddenFromLauncher(String packageName, boolean hidden) {
+    default void setPackageHiddenFromLauncher(String packageName, boolean hidden, int userId) {
     }
 
-    default List<String> getHiddenFromLauncherPackages() {
+    default List<String> getHiddenFromLauncherPackages(int userId) {
         return Collections.emptyList();
     }
 }

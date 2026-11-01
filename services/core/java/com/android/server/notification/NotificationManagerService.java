@@ -9277,7 +9277,7 @@ public class NotificationManagerService extends SystemService {
                     SmallHash.hash(Objects.hashCode(tag) ^ id));
         }
 
-        if (IAxSandboxService.get().isPackageHidden(pkg)) {
+        if (IAxSandboxService.get().isPackageHidden(pkg, userId)) {
             try {
                 String key = pkg + "|" + (tag != null ? tag : "") + "|" + id;
                 IAxSandboxService.get().onHiddenNotificationRemoved(key);
@@ -9379,7 +9379,7 @@ public class NotificationManagerService extends SystemService {
                 callingUid, incomingUserId, true, false, "enqueueNotification", pkg);
         final UserHandle user = UserHandle.of(userId);
 
-        final boolean isHiddenApp = IAxSandboxService.get().isPackageHidden(pkg);
+        final boolean isHiddenApp = IAxSandboxService.get().isPackageHidden(pkg, userId);
         if (isHiddenApp) {
             try {
                 String key = pkg + "|" + (tag != null ? tag : "") + "|" + id;
@@ -9512,7 +9512,7 @@ public class NotificationManagerService extends SystemService {
         fixNotificationWithChannel(notification, channel, notificationUid, pkg);
 
         final NotificationRecord r = new NotificationRecord(getContext(), n, channel);
-        if (IAxSandboxService.get().hasAppLock(pkg)) {
+        if (IAxSandboxService.get().hasAppLock(pkg, userId)) {
             notification.extras.putBoolean(AxSandboxManager.EXTRA_NOTIFICATION_APP_LOCKED, true);
         } else {
             notification.extras.remove(AxSandboxManager.EXTRA_NOTIFICATION_APP_LOCKED);

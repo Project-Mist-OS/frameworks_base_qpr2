@@ -22,29 +22,38 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
-import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.UserHandle;
+import android.os.UserManager;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Slog;
+import android.util.SparseArray;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Holds the sandbox configuration (locked / hidden / sandboxed packages, restricted gids, data
+ * isolation and spoofed settings). The configuration is kept per user and persisted as a JSON blob
+ * in that user's {@link Settings.Secure#getUriFor(String) sandbox_config} setting.
+ */
 public class AppControlController {
     private static final String TAG = "AxSandbox.AppControl";
 
@@ -67,17 +76,43 @@ public class AppControlController {
     private final Set<String> mBlacklistedPackages;
     private final Handler mHandler;
 
-    private final Set<String> mLockedPackages = new HashSet<>();
-    private final Set<String> mHiddenPackages = new HashSet<>();
-    private final Set<String> mLauncherHiddenPackages = new HashSet<>();
-    private final Set<String> mSandboxedPackages = new HashSet<>();
-    private final Set<String> mHideDevOptsPackages = new HashSet<>();
-    private final Map<String, int[]> mGidRestrictions = new HashMap<>();
-    private final Map<String, Set<String>> mSpoofSettingsMap = new HashMap<>();
-    private final Set<String> mDataIsolationPackages = new HashSet<>();
+    /** The sandbox configuration of a single user. Guarded by {@code AppControlController.this}. */
+    private static final class UserConfig {
+        final Set<String> lockedPackages = new HashSet<>();
+        final Set<String> hiddenPackages = new HashSet<>();
+        final Set<String> launcherHiddenPackages = new HashSet<>();
+        final Set<String> sandboxedPackages = new HashSet<>();
+        final Set<String> hideDevOptsPackages = new HashSet<>();
+        final Map<String, int[]> gidRestrictions = new HashMap<>();
+        final Map<String, Set<String>> spoofSettingsMap = new HashMap<>();
+        final Set<String> dataIsolationPackages = new HashSet<>();
+
+        void clear() {
+            lockedPackages.clear();
+            hiddenPackages.clear();
+            launcherHiddenPackages.clear();
+            sandboxedPackages.clear();
+            hideDevOptsPackages.clear();
+            gidRestrictions.clear();
+            spoofSettingsMap.clear();
+            dataIsolationPackages.clear();
+        }
+    }
+
+    private static final class PendingBroadcast {
+        final String packageName;
+        final int uid;
+
+        PendingBroadcast(String packageName, int uid) {
+            this.packageName = packageName;
+            this.uid = uid;
+        }
+    }
+
+    private final SparseArray<UserConfig> mConfigs = new SparseArray<>();
 
     // Launchers reload their whole model per broadcast; flush once per burst of changes.
-    private final Map<String, Integer> mPendingPackageBroadcasts = new LinkedHashMap<>();
+    private final Map<String, PendingBroadcast> mPendingPackageBroadcasts = new LinkedHashMap<>();
     private final Runnable mFlushPackageBroadcasts = this::flushPackageBroadcasts;
 
     private ContentObserver mConfigObserver;
@@ -102,7 +137,7 @@ public class AppControlController {
 
     public void init() {
         registerSettingsObserver();
-        loadConfigFromSettings();
+        loadAllUsers();
     }
 
     private void registerSettingsObserver() {
@@ -121,43 +156,79 @@ public class AppControlController {
         Slog.d(TAG, "Registered Settings observer for sandbox_config");
     }
 
-    private void loadConfigFromSettings() {
-        String jsonStr = Settings.Secure.getString(mContentResolver, SETTING_SANDBOX_CONFIG);
+    private void loadAllUsers() {
+        try {
+            final UserManager um = mContext.getSystemService(UserManager.class);
+            if (um != null) {
+                for (android.content.pm.UserInfo user : um.getAliveUsers()) {
+                    loadConfigFromSettings(user.id);
+                }
+            }
+        } catch (Exception e) {
+            Slog.w(TAG, "Failed to preload sandbox config for all users", e);
+        }
+        // The system user always exists, even if the lookup above failed.
+        getConfig(UserHandle.USER_SYSTEM);
+    }
 
+    /** Loads (or reloads) the configuration of {@code userId} from its sandbox_config setting. */
+    public void loadUser(int userId) {
+        loadConfigFromSettings(userId);
+    }
+
+    private UserConfig getConfig(int userId) {
         synchronized (this) {
-            mLockedPackages.clear();
-            mHiddenPackages.clear();
-            mLauncherHiddenPackages.clear();
-            mSandboxedPackages.clear();
-            mHideDevOptsPackages.clear();
-            mGidRestrictions.clear();
-            mSpoofSettingsMap.clear();
-            mDataIsolationPackages.clear();
+            UserConfig config = mConfigs.get(userId);
+            if (config != null) return config;
+        }
+        // Not loaded yet (e.g. a user that started after init): read it outside our lock.
+        return loadConfigFromSettings(userId);
+    }
+
+    private UserConfig loadConfigFromSettings(int userId) {
+        String jsonStr = null;
+        try {
+            jsonStr = Settings.Secure.getStringForUser(
+                    mContentResolver, SETTING_SANDBOX_CONFIG, userId);
+        } catch (Exception e) {
+            Slog.w(TAG, "Failed to read sandbox_config for user " + userId, e);
+        }
+
+        UserConfig config;
+        synchronized (this) {
+            config = mConfigs.get(userId);
+            if (config == null) {
+                config = new UserConfig();
+                mConfigs.put(userId, config);
+            }
+            config.clear();
 
             if (!TextUtils.isEmpty(jsonStr)) {
                 try {
-                    JSONObject config = new JSONObject(jsonStr);
+                    JSONObject json = new JSONObject(jsonStr);
 
-                    loadPackageSet(config, KEY_LOCKED_PKGS, mLockedPackages);
-                    loadPackageSet(config, KEY_HIDDEN_PKGS, mHiddenPackages);
-                    loadPackageSet(config, KEY_LAUNCHER_HIDDEN_PKGS, mLauncherHiddenPackages);
-                    loadPackageSet(config, KEY_SANDBOXED_PKGS, mSandboxedPackages);
-                    loadPackageSet(config, KEY_HIDEDEVOPTS_PKGS, mHideDevOptsPackages);
-                    loadSpoofSettingsMap(config);
-                    loadPackageSet(config, KEY_DATA_ISOLATION, mDataIsolationPackages);
-                    loadGidRestrictions(config);
+                    loadPackageSet(json, KEY_LOCKED_PKGS, config.lockedPackages);
+                    loadPackageSet(json, KEY_HIDDEN_PKGS, config.hiddenPackages);
+                    loadPackageSet(json, KEY_LAUNCHER_HIDDEN_PKGS, config.launcherHiddenPackages);
+                    loadPackageSet(json, KEY_SANDBOXED_PKGS, config.sandboxedPackages);
+                    loadPackageSet(json, KEY_HIDEDEVOPTS_PKGS, config.hideDevOptsPackages);
+                    loadSpoofSettingsMap(json, config);
+                    loadPackageSet(json, KEY_DATA_ISOLATION, config.dataIsolationPackages);
+                    loadGidRestrictions(json, config);
 
                 } catch (JSONException e) {
-                    Slog.e(TAG, "Failed to parse sandbox_config JSON", e);
+                    Slog.e(TAG, "Failed to parse sandbox_config JSON for user " + userId, e);
                 }
             }
-        }
 
-        Slog.i(TAG, "Loaded config: locked=" + mLockedPackages.size()
-                + " hidden=" + mHiddenPackages.size()
-                + " launcherHidden=" + mLauncherHiddenPackages.size()
-                + " sandboxed=" + mSandboxedPackages.size()
-                + " hideDevOpts=" + mHideDevOptsPackages.size());
+            Slog.i(TAG, "Loaded config for user " + userId
+                    + ": locked=" + config.lockedPackages.size()
+                    + " hidden=" + config.hiddenPackages.size()
+                    + " launcherHidden=" + config.launcherHiddenPackages.size()
+                    + " sandboxed=" + config.sandboxedPackages.size()
+                    + " hideDevOpts=" + config.hideDevOptsPackages.size());
+        }
+        return config;
     }
 
     private void loadPackageSet(JSONObject config, String key, Set<String> target) {
@@ -172,69 +243,83 @@ public class AppControlController {
         }
     }
 
-    private void saveConfigToSettings() {
+    private void saveConfigToSettings(int userId) {
         try {
-            JSONObject config = new JSONObject();
+            JSONObject json = new JSONObject();
 
             synchronized (this) {
-                config.put(KEY_LOCKED_PKGS, new JSONArray(mLockedPackages));
-                config.put(KEY_HIDDEN_PKGS, new JSONArray(mHiddenPackages));
-                config.put(KEY_LAUNCHER_HIDDEN_PKGS, new JSONArray(mLauncherHiddenPackages));
-                config.put(KEY_SANDBOXED_PKGS, new JSONArray(mSandboxedPackages));
-                config.put(KEY_HIDEDEVOPTS_PKGS, new JSONArray(mHideDevOptsPackages));
-                saveSpoofSettingsMap(config);
-                config.put(KEY_DATA_ISOLATION, new JSONArray(mDataIsolationPackages));
-                saveGidRestrictions(config);
+                final UserConfig config = getConfig(userId);
+                json.put(KEY_LOCKED_PKGS, new JSONArray(config.lockedPackages));
+                json.put(KEY_HIDDEN_PKGS, new JSONArray(config.hiddenPackages));
+                json.put(KEY_LAUNCHER_HIDDEN_PKGS, new JSONArray(config.launcherHiddenPackages));
+                json.put(KEY_SANDBOXED_PKGS, new JSONArray(config.sandboxedPackages));
+                json.put(KEY_HIDEDEVOPTS_PKGS, new JSONArray(config.hideDevOptsPackages));
+                saveSpoofSettingsMap(json, config);
+                json.put(KEY_DATA_ISOLATION, new JSONArray(config.dataIsolationPackages));
+                saveGidRestrictions(json, config);
             }
 
-            Settings.Secure.putString(mContentResolver, SETTING_SANDBOX_CONFIG, config.toString());
+            Settings.Secure.putStringForUser(
+                    mContentResolver, SETTING_SANDBOX_CONFIG, json.toString(), userId);
 
         } catch (JSONException e) {
-            Slog.e(TAG, "Failed to save sandbox_config JSON", e);
+            Slog.e(TAG, "Failed to save sandbox_config JSON for user " + userId, e);
         }
     }
 
     private void reloadConfigAndBroadcastChanges() {
-        final Set<String> before = new HashSet<>();
+        final List<Integer> userIds = new ArrayList<>();
         synchronized (this) {
-            before.addAll(mHiddenPackages);
-            before.addAll(mLauncherHiddenPackages);
-        }
-        loadConfigFromSettings();
-        final Set<String> changed = new HashSet<>(before);
-        synchronized (this) {
-            for (String pkg : mHiddenPackages) {
-                if (!changed.remove(pkg)) changed.add(pkg);
-            }
-            for (String pkg : mLauncherHiddenPackages) {
-                if (!changed.remove(pkg)) changed.add(pkg);
+            for (int i = 0; i < mConfigs.size(); i++) {
+                userIds.add(mConfigs.keyAt(i));
             }
         }
-        for (String pkg : changed) {
-            int uid = getPackageUid(pkg);
-            if (uid >= 0) {
-                queuePackageChangedBroadcast(pkg, uid);
+        for (int userId : userIds) {
+            final Set<String> before = new HashSet<>();
+            synchronized (this) {
+                final UserConfig config = mConfigs.get(userId);
+                if (config != null) {
+                    before.addAll(config.hiddenPackages);
+                    before.addAll(config.launcherHiddenPackages);
+                }
+            }
+            final UserConfig config = loadConfigFromSettings(userId);
+            final Set<String> changed = new HashSet<>(before);
+            synchronized (this) {
+                for (String pkg : config.hiddenPackages) {
+                    if (!changed.remove(pkg)) changed.add(pkg);
+                }
+                for (String pkg : config.launcherHiddenPackages) {
+                    if (!changed.remove(pkg)) changed.add(pkg);
+                }
+            }
+            for (String pkg : changed) {
+                int uid = getPackageUid(pkg, userId);
+                if (uid >= 0) {
+                    queuePackageChangedBroadcast(pkg, uid);
+                }
             }
         }
     }
 
     private void queuePackageChangedBroadcast(String packageName, int uid) {
         synchronized (this) {
-            mPendingPackageBroadcasts.put(packageName, uid);
+            mPendingPackageBroadcasts.put(UserHandle.getUserId(uid) + ":" + packageName,
+                    new PendingBroadcast(packageName, uid));
         }
         mHandler.removeCallbacks(mFlushPackageBroadcasts);
         mHandler.postDelayed(mFlushPackageBroadcasts, PACKAGE_CHANGED_FLUSH_MS);
     }
 
     private void flushPackageBroadcasts() {
-        final Map<String, Integer> pending;
+        final Map<String, PendingBroadcast> pending;
         synchronized (this) {
             if (mPendingPackageBroadcasts.isEmpty()) return;
             pending = new LinkedHashMap<>(mPendingPackageBroadcasts);
             mPendingPackageBroadcasts.clear();
         }
-        for (Map.Entry<String, Integer> e : pending.entrySet()) {
-            broadcastPackageChange(e.getKey(), e.getValue());
+        for (PendingBroadcast e : pending.values()) {
+            broadcastPackageChange(e.packageName, e.uid);
         }
     }
 
@@ -258,180 +343,213 @@ public class AppControlController {
         }
     }
 
-    public boolean isAppLocked(String packageName) {
+    public boolean isAppLocked(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
         if (mBlacklistedPackages.contains(packageName)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mLockedPackages.contains(packageName);
+            return config.lockedPackages.contains(packageName);
         }
     }
 
+    /** Whether any loaded user has a locked package. */
     public boolean hasLockedPackages() {
         synchronized (this) {
-            return !mLockedPackages.isEmpty();
+            for (int i = 0; i < mConfigs.size(); i++) {
+                if (!mConfigs.valueAt(i).lockedPackages.isEmpty()) return true;
+            }
+            return false;
         }
     }
 
-    public boolean isPackageHidden(String packageName) {
-        if (TextUtils.isEmpty(packageName)) return false;
+    public boolean hasLockedPackages(int userId) {
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            final boolean hidden = mHiddenPackages.contains(packageName);
-            return hidden;
+            return !config.lockedPackages.isEmpty();
         }
     }
 
-    public boolean isPackageHiddenFromLauncher(String packageName) {
+    public boolean isPackageHidden(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mLauncherHiddenPackages.contains(packageName);
+            return config.hiddenPackages.contains(packageName);
         }
     }
 
-    public boolean isPackageSandboxed(String packageName) {
+    public boolean isPackageHiddenFromLauncher(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mSandboxedPackages.contains(packageName);
+            return config.launcherHiddenPackages.contains(packageName);
         }
     }
 
-    public boolean isDevOptionsHidden(String packageName) {
+    public boolean isPackageSandboxed(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mHideDevOptsPackages.contains(packageName);
+            return config.sandboxedPackages.contains(packageName);
         }
     }
 
-    public void addLockedApp(String packageName) {
+    public boolean isDevOptionsHidden(String packageName, int userId) {
+        if (TextUtils.isEmpty(packageName)) return false;
+        final UserConfig config = getConfig(userId);
+        synchronized (this) {
+            return config.hideDevOptsPackages.contains(packageName);
+        }
+    }
+
+    public void addLockedApp(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
-        if (!isPackageLockable(packageName)) {
-            Slog.w(TAG, "Cannot lock package - not lockable: " + packageName);
+        if (!isPackageLockable(packageName, userId)) {
+            Slog.w(TAG, "Cannot lock package - not lockable: " + packageName
+                    + " userId=" + userId);
             return;
         }
-        int uid = getPackageUid(packageName);
+        int uid = getPackageUid(packageName, userId);
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            if (mLockedPackages.add(packageName)) {
-                saveConfigToSettings();
+            if (config.lockedPackages.add(packageName)) {
+                saveConfigToSettings(userId);
                 if (uid >= 0) {
                     queuePackageChangedBroadcast(packageName, uid);
                 }
             }
         }
-        Slog.d(TAG, "addLockedApp: " + packageName);
+        Slog.d(TAG, "addLockedApp: " + packageName + " userId=" + userId);
     }
 
-    public void removeLockedApp(String packageName) {
+    public void removeLockedApp(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
-        int uid = getPackageUid(packageName);
+        int uid = getPackageUid(packageName, userId);
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            if (mLockedPackages.remove(packageName)) {
-                saveConfigToSettings();
+            if (config.lockedPackages.remove(packageName)) {
+                saveConfigToSettings(userId);
                 if (uid >= 0) {
                     queuePackageChangedBroadcast(packageName, uid);
                 }
             }
         }
-        Slog.d(TAG, "removeLockedApp: " + packageName);
+        Slog.d(TAG, "removeLockedApp: " + packageName + " userId=" + userId);
     }
 
-    public void setPackageHidden(String packageName, boolean hidden) {
+    public void setPackageHidden(String packageName, boolean hidden, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
-        if (hidden && !isPackageLockable(packageName)) {
-            Slog.w(TAG, "Cannot hide package - not lockable: " + packageName);
+        if (hidden && !isPackageLockable(packageName, userId)) {
+            Slog.w(TAG, "Cannot hide package - not lockable: " + packageName
+                    + " userId=" + userId);
             return;
         }
-        int uid = getPackageUid(packageName);
+        int uid = getPackageUid(packageName, userId);
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            boolean changed = hidden ? mHiddenPackages.add(packageName)
-                                     : mHiddenPackages.remove(packageName);
+            boolean changed = hidden ? config.hiddenPackages.add(packageName)
+                                     : config.hiddenPackages.remove(packageName);
             if (changed) {
-                saveConfigToSettings();
+                saveConfigToSettings(userId);
                 if (uid >= 0) {
                     queuePackageChangedBroadcast(packageName, uid);
                 }
             }
         }
-        Slog.d(TAG, "setPackageHidden: " + packageName + " hidden=" + hidden);
+        Slog.d(TAG, "setPackageHidden: " + packageName + " hidden=" + hidden
+                + " userId=" + userId);
     }
 
-    public void setPackageHiddenFromLauncher(String packageName, boolean hidden) {
+    public void setPackageHiddenFromLauncher(String packageName, boolean hidden, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
-        if (hidden && !isPackageLockable(packageName)) {
-            Slog.w(TAG, "Cannot hide package from launcher - not lockable: " + packageName);
+        if (hidden && !isPackageLockable(packageName, userId)) {
+            Slog.w(TAG, "Cannot hide package from launcher - not lockable: " + packageName
+                    + " userId=" + userId);
             return;
         }
-        int uid = getPackageUid(packageName);
+        int uid = getPackageUid(packageName, userId);
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            boolean changed = hidden ? mLauncherHiddenPackages.add(packageName)
-                                     : mLauncherHiddenPackages.remove(packageName);
+            boolean changed = hidden ? config.launcherHiddenPackages.add(packageName)
+                                     : config.launcherHiddenPackages.remove(packageName);
             if (changed) {
-                saveConfigToSettings();
+                saveConfigToSettings(userId);
                 if (uid >= 0) {
                     queuePackageChangedBroadcast(packageName, uid);
                 }
             }
         }
-        Slog.d(TAG, "setPackageHiddenFromLauncher: " + packageName + " hidden=" + hidden);
+        Slog.d(TAG, "setPackageHiddenFromLauncher: " + packageName + " hidden=" + hidden
+                + " userId=" + userId);
     }
 
-    public void setPackageSandboxed(String packageName, boolean sandboxed) {
+    public void setPackageSandboxed(String packageName, boolean sandboxed, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
-        int uid = getPackageUid(packageName);
+        int uid = getPackageUid(packageName, userId);
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            boolean changed = sandboxed ? mSandboxedPackages.add(packageName)
-                                       : mSandboxedPackages.remove(packageName);
+            boolean changed = sandboxed ? config.sandboxedPackages.add(packageName)
+                                        : config.sandboxedPackages.remove(packageName);
             if (changed) {
-                saveConfigToSettings();
+                saveConfigToSettings(userId);
                 if (uid >= 0) {
                     queuePackageChangedBroadcast(packageName, uid);
                 }
             }
         }
-        Slog.d(TAG, "setPackageSandboxed: " + packageName + " sandboxed=" + sandboxed);
+        Slog.d(TAG, "setPackageSandboxed: " + packageName + " sandboxed=" + sandboxed
+                + " userId=" + userId);
     }
 
-    public void setDevOptionsHidden(String packageName, boolean hidden) {
+    public void setDevOptionsHidden(String packageName, boolean hidden, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            boolean changed = hidden ? mHideDevOptsPackages.add(packageName)
-                                    : mHideDevOptsPackages.remove(packageName);
+            boolean changed = hidden ? config.hideDevOptsPackages.add(packageName)
+                                     : config.hideDevOptsPackages.remove(packageName);
             if (changed) {
-                saveConfigToSettings();
+                saveConfigToSettings(userId);
             }
         }
-        Slog.d(TAG, "setDevOptionsHidden: " + packageName + " hidden=" + hidden);
+        Slog.d(TAG, "setDevOptionsHidden: " + packageName + " hidden=" + hidden
+                + " userId=" + userId);
     }
 
-    public List<String> getLockedPackages() {
+    public List<String> getLockedPackages(int userId) {
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return new ArrayList<>(mLockedPackages);
+            return new ArrayList<>(config.lockedPackages);
         }
     }
 
-    public List<String> getHiddenPackages() {
+    public List<String> getHiddenPackages(int userId) {
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return new ArrayList<>(mHiddenPackages);
+            return new ArrayList<>(config.hiddenPackages);
         }
     }
 
-    public List<String> getHiddenFromLauncherPackages() {
+    public List<String> getHiddenFromLauncherPackages(int userId) {
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return new ArrayList<>(mLauncherHiddenPackages);
+            return new ArrayList<>(config.launcherHiddenPackages);
         }
     }
 
-    public List<String> getSandboxedPackages() {
+    public List<String> getSandboxedPackages(int userId) {
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return new ArrayList<>(mSandboxedPackages);
+            return new ArrayList<>(config.sandboxedPackages);
         }
     }
 
-    public List<String> getDevOptionsHiddenPackages() {
+    public List<String> getDevOptionsHiddenPackages(int userId) {
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return new ArrayList<>(mHideDevOptsPackages);
+            return new ArrayList<>(config.hideDevOptsPackages);
         }
     }
 
-    public boolean isPackageLockable(String packageName) {
+    public boolean isPackageLockable(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
         if (mBlacklistedPackages.contains(packageName)) return false;
 
@@ -439,21 +557,22 @@ public class AppControlController {
 
         try {
             List<LauncherActivityInfo> activities = mLauncherApps.getActivityList(
-                    packageName, UserHandle.of(UserHandle.USER_SYSTEM));
+                    packageName, UserHandle.of(userId));
             return activities != null && !activities.isEmpty();
         } catch (Exception e) {
-            Slog.w(TAG, "Failed to check if package is lockable: " + packageName, e);
+            Slog.w(TAG, "Failed to check if package is lockable: " + packageName
+                    + " userId=" + userId, e);
             return false;
         }
     }
 
-    public List<String> getLockablePackages() {
+    public List<String> getLockablePackages(int userId) {
         List<String> result = new ArrayList<>();
 
         if (mLauncherApps != null) {
             try {
                 List<LauncherActivityInfo> activities = mLauncherApps.getActivityList(
-                        null, UserHandle.of(UserHandle.USER_SYSTEM));
+                        null, UserHandle.of(userId));
 
                 Set<String> seen = new HashSet<>();
                 for (LauncherActivityInfo info : activities) {
@@ -472,11 +591,15 @@ public class AppControlController {
             Slog.w(TAG, "LauncherApps returned empty, using PackageManager fallback");
             try {
                 PackageManager pm = mContext.getPackageManager();
-                List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+                List<ApplicationInfo> apps = pm.getInstalledApplicationsAsUser(0, userId);
                 for (ApplicationInfo appInfo : apps) {
                     if (mBlacklistedPackages.contains(appInfo.packageName)) continue;
                     if (isSystemUid(appInfo.uid)) continue;
-                    if (pm.getLaunchIntentForPackage(appInfo.packageName) != null) {
+                    Intent launch = new Intent(Intent.ACTION_MAIN)
+                            .addCategory(Intent.CATEGORY_LAUNCHER)
+                            .setPackage(appInfo.packageName);
+                    List<ResolveInfo> launchers = pm.queryIntentActivitiesAsUser(launch, 0, userId);
+                    if (launchers != null && !launchers.isEmpty()) {
                         result.add(appInfo.packageName);
                     }
                 }
@@ -488,10 +611,10 @@ public class AppControlController {
         return result;
     }
 
-    private int getPackageUid(String packageName) {
+    private int getPackageUid(String packageName, int userId) {
         try {
             return mContext.getPackageManager()
-                    .getApplicationInfo(packageName, 0).uid;
+                    .getApplicationInfoAsUser(packageName, 0, userId).uid;
         } catch (PackageManager.NameNotFoundException e) {
             return -1;
         }
@@ -502,10 +625,10 @@ public class AppControlController {
         return appId == android.os.Process.ROOT_UID || appId == android.os.Process.SYSTEM_UID;
     }
 
-    private void loadGidRestrictions(JSONObject config) {
-        JSONObject gidObj = config.optJSONObject(KEY_GID_RESTRICTIONS);
+    private void loadGidRestrictions(JSONObject json, UserConfig config) {
+        JSONObject gidObj = json.optJSONObject(KEY_GID_RESTRICTIONS);
         if (gidObj == null) return;
-        java.util.Iterator<String> keys = gidObj.keys();
+        Iterator<String> keys = gidObj.keys();
         while (keys.hasNext()) {
             String pkg = keys.next();
             JSONArray arr = gidObj.optJSONArray(pkg);
@@ -514,92 +637,99 @@ public class AppControlController {
                 for (int i = 0; i < arr.length(); i++) {
                     gids[i] = arr.optInt(i);
                 }
-                mGidRestrictions.put(pkg, gids);
+                config.gidRestrictions.put(pkg, gids);
             }
         }
     }
 
-    private void saveGidRestrictions(JSONObject config) throws JSONException {
+    private void saveGidRestrictions(JSONObject json, UserConfig config) throws JSONException {
         JSONObject gidObj = new JSONObject();
-        for (Map.Entry<String, int[]> entry : mGidRestrictions.entrySet()) {
+        for (Map.Entry<String, int[]> entry : config.gidRestrictions.entrySet()) {
             JSONArray arr = new JSONArray();
             for (int gid : entry.getValue()) {
                 arr.put(gid);
             }
             gidObj.put(entry.getKey(), arr);
         }
-        config.put(KEY_GID_RESTRICTIONS, gidObj);
+        json.put(KEY_GID_RESTRICTIONS, gidObj);
     }
 
-    public void setRestrictedGids(String packageName, int[] gids) {
+    public void setRestrictedGids(String packageName, int[] gids, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
             if (gids == null || gids.length == 0) {
-                mGidRestrictions.remove(packageName);
+                config.gidRestrictions.remove(packageName);
             } else {
-                mGidRestrictions.put(packageName, gids);
+                config.gidRestrictions.put(packageName, gids);
             }
-            saveConfigToSettings();
+            saveConfigToSettings(userId);
         }
     }
 
-    public int[] getRestrictedGids(String packageName) {
+    public int[] getRestrictedGids(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return null;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mGidRestrictions.get(packageName);
+            return config.gidRestrictions.get(packageName);
         }
     }
 
-    public boolean isSettingsSpoofEnabled(String packageName) {
+    public boolean isSettingsSpoofEnabled(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mSpoofSettingsMap.containsKey(packageName);
+            return config.spoofSettingsMap.containsKey(packageName);
         }
     }
 
-    public boolean isSpoofSettingEnabled(String packageName, String settingKey) {
+    public boolean isSpoofSettingEnabled(String packageName, String settingKey, int userId) {
         if (TextUtils.isEmpty(packageName) || TextUtils.isEmpty(settingKey)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            Set<String> settings = mSpoofSettingsMap.get(packageName);
+            Set<String> settings = config.spoofSettingsMap.get(packageName);
             return settings != null && settings.contains(settingKey);
         }
     }
 
-    public void setSpoofSettingEnabled(String packageName, String settingKey, boolean enabled) {
+    public void setSpoofSettingEnabled(String packageName, String settingKey, boolean enabled,
+            int userId) {
         if (TextUtils.isEmpty(packageName) || TextUtils.isEmpty(settingKey)) return;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            Set<String> settings = mSpoofSettingsMap.get(packageName);
+            Set<String> settings = config.spoofSettingsMap.get(packageName);
             boolean changed;
             if (enabled) {
                 if (settings == null) {
                     settings = new HashSet<>();
-                    mSpoofSettingsMap.put(packageName, settings);
+                    config.spoofSettingsMap.put(packageName, settings);
                 }
                 changed = settings.add(settingKey);
             } else {
                 if (settings == null) return;
                 changed = settings.remove(settingKey);
                 if (settings.isEmpty()) {
-                    mSpoofSettingsMap.remove(packageName);
+                    config.spoofSettingsMap.remove(packageName);
                 }
             }
-            if (changed) saveConfigToSettings();
+            if (changed) saveConfigToSettings(userId);
         }
     }
 
-    public List<String> getEnabledSpoofSettings(String packageName) {
-        if (TextUtils.isEmpty(packageName)) return java.util.Collections.emptyList();
+    public List<String> getEnabledSpoofSettings(String packageName, int userId) {
+        if (TextUtils.isEmpty(packageName)) return Collections.emptyList();
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            Set<String> settings = mSpoofSettingsMap.get(packageName);
-            if (settings == null || settings.isEmpty()) return java.util.Collections.emptyList();
-            return new java.util.ArrayList<>(settings);
+            Set<String> settings = config.spoofSettingsMap.get(packageName);
+            if (settings == null || settings.isEmpty()) return Collections.emptyList();
+            return new ArrayList<>(settings);
         }
     }
 
-    private void loadSpoofSettingsMap(JSONObject config) {
-        JSONObject mapObj = config.optJSONObject(KEY_SPOOF_SETTINGS_MAP);
+    private void loadSpoofSettingsMap(JSONObject json, UserConfig config) {
+        JSONObject mapObj = json.optJSONObject(KEY_SPOOF_SETTINGS_MAP);
         if (mapObj == null) return;
-        java.util.Iterator<String> keys = mapObj.keys();
+        Iterator<String> keys = mapObj.keys();
         while (keys.hasNext()) {
             String pkg = keys.next();
             JSONArray arr = mapObj.optJSONArray(pkg);
@@ -610,33 +740,35 @@ public class AppControlController {
                     if (!TextUtils.isEmpty(s)) settings.add(s);
                 }
                 if (!settings.isEmpty()) {
-                    mSpoofSettingsMap.put(pkg, settings);
+                    config.spoofSettingsMap.put(pkg, settings);
                 }
             }
         }
     }
 
-    private void saveSpoofSettingsMap(JSONObject config) throws JSONException {
+    private void saveSpoofSettingsMap(JSONObject json, UserConfig config) throws JSONException {
         JSONObject mapObj = new JSONObject();
-        for (Map.Entry<String, Set<String>> entry : mSpoofSettingsMap.entrySet()) {
+        for (Map.Entry<String, Set<String>> entry : config.spoofSettingsMap.entrySet()) {
             mapObj.put(entry.getKey(), new JSONArray(entry.getValue()));
         }
-        config.put(KEY_SPOOF_SETTINGS_MAP, mapObj);
+        json.put(KEY_SPOOF_SETTINGS_MAP, mapObj);
     }
 
-    public boolean isDataIsolationEnabled(String packageName) {
+    public boolean isDataIsolationEnabled(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return false;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            return mDataIsolationPackages.contains(packageName);
+            return config.dataIsolationPackages.contains(packageName);
         }
     }
 
-    public void setDataIsolationEnabled(String packageName, boolean enabled) {
+    public void setDataIsolationEnabled(String packageName, boolean enabled, int userId) {
         if (TextUtils.isEmpty(packageName)) return;
+        final UserConfig config = getConfig(userId);
         synchronized (this) {
-            boolean changed = enabled ? mDataIsolationPackages.add(packageName)
-                                      : mDataIsolationPackages.remove(packageName);
-            if (changed) saveConfigToSettings();
+            boolean changed = enabled ? config.dataIsolationPackages.add(packageName)
+                                      : config.dataIsolationPackages.remove(packageName);
+            if (changed) saveConfigToSettings(userId);
         }
     }
 }
