@@ -281,9 +281,15 @@ private fun MistBarChipContent(
             heightScale *
             scale
     val iconSize = (if (companion) 18.dp else 20.dp) * heightScale * scale
+    val chipSurfaceAlpha: () -> Float = {
+        if (legacy != null) 1f
+        else if (settings.enabled("mini_fade", true)) collapse
+        else if (viewModel.isPopupShown) 0f else 1f
+    }
     MistBarSurface(
         mini = true,
         resting = resting,
+        layerAlpha = chipSurfaceAlpha,
         shape = if (companion) CircleShape else MistBarSquircle(settings.cornerRadius.dp),
         modifier =
             modifier

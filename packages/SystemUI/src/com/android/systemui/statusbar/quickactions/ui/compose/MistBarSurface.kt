@@ -109,6 +109,7 @@ internal fun MistBarSurface(
     resting: Boolean = false,
     shape: Shape = mistBarExpandedShape(LocalMistBarState.current.settings),
     background: (@Composable BoxScope.() -> Unit)? = null,
+    layerAlpha: (() -> Float)? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val settings = LocalMistBarState.current.settings
@@ -141,16 +142,21 @@ internal fun MistBarSurface(
             if (background != null) {
                 background()
             } else if (blur) {
-                PopupBlurBackground(
-                    shape = shape,
-                    overlayColor =
-                        surfaceColor
-                            .copy(alpha = if (resting) 0.55f else surfaceColor.alpha * 0.55f)
-                            .toArgb(),
-                    fallbackColor = surfaceColor.toArgb(),
-                    modifier = Modifier.matchParentSize(),
-                    alpha = if (resting) settings.collapsedOpacity else 1f,
-                )
+                // The blur ignores the alpha of the graphics layer this surface is drawn in.
+                CompositionLocalProvider(
+                    LocalIslandSurfaceAlpha provides (layerAlpha ?: LocalIslandSurfaceAlpha.current)
+                ) {
+                    PopupBlurBackground(
+                        shape = shape,
+                        overlayColor =
+                            surfaceColor
+                                .copy(alpha = if (resting) 0.55f else surfaceColor.alpha * 0.55f)
+                                .toArgb(),
+                        fallbackColor = surfaceColor.toArgb(),
+                        modifier = Modifier.matchParentSize(),
+                        alpha = if (resting) settings.collapsedOpacity else 1f,
+                    )
+                }
             }
             CompositionLocalProvider(LocalContentColor provides foreground) { content() }
         }
