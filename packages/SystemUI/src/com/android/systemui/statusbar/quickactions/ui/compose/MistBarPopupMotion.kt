@@ -214,6 +214,7 @@ internal fun MistBarPopupMotion(
         )
     val frame = Rect(x, y, x + w, y + h)
     val currentFrame by rememberUpdatedState(frame)
+    val secondaryAlpha = remember { { alpha.value } }
     var secondaryBounds by remember { mutableStateOf(Rect.Zero) }
     val currentSecondary by rememberUpdatedState(secondaryBounds)
     val originRadius = with(density) { minOf(settings.cornerRadius.dp.toPx(), origin.height / 2f) }
@@ -276,6 +277,7 @@ internal fun MistBarPopupMotion(
                 CompositionLocalProvider(
                     LocalIslandPopupContentOnly provides false,
                     LocalIslandPopupRevealMillis provides Float.POSITIVE_INFINITY,
+                    LocalIslandSurfaceAlpha provides secondaryAlpha,
                 ) {
                     secondaryContent()
                 }

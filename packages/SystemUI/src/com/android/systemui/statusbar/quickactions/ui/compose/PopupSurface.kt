@@ -171,6 +171,7 @@ internal fun PopupBlurBackground(
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val enabled = LocalAxBlurEnabled.current
+    val ancestorAlpha = LocalIslandSurfaceAlpha.current
     AndroidView(
         factory = { PopupBlurHost(it) },
         update = { view ->
@@ -180,7 +181,7 @@ internal fun PopupBlurBackground(
                 layoutDirection,
                 overlayColor,
                 fallbackColor,
-                alpha,
+                alpha * (ancestorAlpha?.invoke() ?: 1f),
                 enabled,
             )
         },

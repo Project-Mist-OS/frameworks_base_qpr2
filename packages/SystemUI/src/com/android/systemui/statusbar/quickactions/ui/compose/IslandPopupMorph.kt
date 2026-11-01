@@ -183,6 +183,7 @@ internal fun IslandPopupMorph(
     var motion by remember { mutableStateOf<IslandPopupGeometry?>(null) }
     val contentFade = remember { Animatable(0f) }
     val surfaceFade = remember { Animatable(1f) }
+    val surfaceAlpha = remember { { surfaceFade.value } }
     val revealMillis = remember { Animatable(0f) }
     val currentOnHidden by rememberUpdatedState(onHidden)
     val currentOnDismiss by rememberUpdatedState(onDismissRequest)
@@ -377,6 +378,8 @@ internal fun IslandPopupMorph(
         contentFade.value *
             if (isVisible && !fastEnter) DynamicIslandMotion.contentReveal(expansion) else 1f
     val currentBodyAlpha by rememberUpdatedState(bodyAlpha)
+    val bodySurfaceAlpha =
+        remember(geometry == null) { { if (geometry != null) currentBodyAlpha else 0f } }
     val currentBounds by rememberUpdatedState(frame)
     val secondaryLeft =
         mistBarPopupLeft(
@@ -487,7 +490,10 @@ internal fun IslandPopupMorph(
                 propagateMinConstraints = true,
             ) {
                 if (geometry != null) {
-                    CompositionLocalProvider(LocalIslandPopupRevealMillis provides 260f) {
+                    CompositionLocalProvider(
+                        LocalIslandPopupRevealMillis provides 260f,
+                        LocalIslandSurfaceAlpha provides surfaceAlpha,
+                    ) {
                         MistBarSurface(
                             shape = popupShape,
                             background =
@@ -522,6 +528,7 @@ internal fun IslandPopupMorph(
                     LocalIslandPopupRevealMillis provides
                         if (isVisible) revealMillis.value else Float.POSITIVE_INFINITY,
                     LocalIslandPopupContentOnly provides false,
+                    LocalIslandSurfaceAlpha provides bodySurfaceAlpha,
                 ) {
                     secondaryContent()
                 }

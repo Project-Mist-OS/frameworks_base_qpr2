@@ -106,6 +106,14 @@ internal fun rememberIslandPressScale(isPressed: Boolean): State<Float> =
 internal val LocalIslandPopupRevealMillis = compositionLocalOf<Float?> { null }
 internal val LocalIslandPopupContentOnly = compositionLocalOf { false }
 
+/**
+ * Alpha that an ancestor graphics layer applies to the popup surfaces below it.
+ *
+ * The blur behind a surface is composited outside of that layer and ignores its alpha, so the blur
+ * host has to be faded explicitly to follow the open and close animation.
+ */
+internal val LocalIslandSurfaceAlpha = compositionLocalOf<(() -> Float)?> { null }
+
 @Composable
 internal fun islandRestDiameterPx(): Float? {
     val view = LocalView.current
