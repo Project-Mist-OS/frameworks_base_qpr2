@@ -16,26 +16,34 @@
 
 package com.android.systemui.statusbar.quickactions.media.shared.model
 
+import com.android.systemui.animation.ActivityTransitionAnimator
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.media.controls.shared.model.MediaAction
+import com.android.systemui.media.controls.shared.model.MediaButton
 
 /** Model used to display and control media from the status bar island. */
-    data class MediaControlChipModel(
-        val appIcon: Icon?,
-        val artworkIcon: Icon?,
-        val appName: String?,
-        val artistName: CharSequence?,
-        val songName: CharSequence?,
-        val playOrPause: MediaAction?,
-        val nextAction: MediaAction?,
-        val previousAction: MediaAction?,
-        val openApp: (() -> Unit)?,
-        val seekTo: ((Long) -> Unit)?,
-        val durationMs: Long,
-        val positionMs: Long,
-        val canBeScrubbed: Boolean,
-        val isPlaying: Boolean,
-        val packageName: String? = null,
-        val lyrics: String? = null,
-        val syncedLyrics: String? = null,
+data class MediaControlChipModel(
+    val appIcon: Icon?,
+    val artworkIcon: Icon?,
+    val appName: String?,
+    val artistName: CharSequence?,
+    val songName: CharSequence?,
+    val playOrPause: MediaAction?,
+    val nextAction: MediaAction?,
+    val previousAction: MediaAction?,
+    val openApp: (() -> Unit)?,
+    val seekTo: ((Long) -> Unit)?,
+    val durationMs: Long,
+    val positionMs: Long,
+    val canBeScrubbed: Boolean,
+    val isPlaying: Boolean,
+    val packageName: String? = null,
+    val lyrics: String? = null,
+    val syncedLyrics: String? = null,
+    val customActions: List<MediaAction> = emptyList(),
+    val playbackSpeed: Float = 1f,
+    val transportActions: MediaButton? = null,
+    val sourceUserId: Int? = null,
+    val openOutput: (() -> Unit)? = null,
+    val openAppFromIsland: ((ActivityTransitionAnimator.Controller?) -> Unit)? = null,
 )

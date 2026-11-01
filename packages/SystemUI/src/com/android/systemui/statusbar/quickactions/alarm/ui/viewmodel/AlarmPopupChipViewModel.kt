@@ -25,29 +25,31 @@ import com.android.systemui.ActivityIntentHelper
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.lifecycle.HydratedActivatable
+import com.android.systemui.lifecycle.ExclusiveActivatable
+import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.NotificationLockscreenUserManager
+import com.android.systemui.statusbar.quickactions.alarm.shared.model.AlarmPopupModel
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.ALARMS
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled
+import com.android.systemui.statusbar.quickactions.popups.shared.model.PopupActionModel
+import com.android.systemui.statusbar.quickactions.popups.shared.toActivityLaunchAction
+import com.android.systemui.statusbar.quickactions.popups.shared.toSendAction
+import com.android.systemui.statusbar.quickactions.shared.model.ChipIcon
+import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
+import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
+import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
+import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
+import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.statusbar.policy.NextAlarmController
-import com.android.systemui.statusbar.quickactions.alarm.shared.model.AlarmPopupModel
-import com.android.systemui.statusbar.quickactions.popups.shared.model.PopupActionModel
-import com.android.systemui.statusbar.quickactions.popups.shared.toActivityLaunchAction
-import com.android.systemui.statusbar.quickactions.popups.shared.toSendAction
-import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
-import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
-import com.android.systemui.statusbar.quickactions.shared.model.ChipIcon
-import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
-import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
-import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
-import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings
 import java.util.Locale
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -65,59 +67,62 @@ constructor(
     private val activityIntentHelper: ActivityIntentHelper,
     private val lockscreenUserManager: NotificationLockscreenUserManager,
     private val keyguardStateController: KeyguardStateController,
-) : StatusBarPopupChipViewModel, HydratedActivatable() {
+) : StatusBarPopupChipViewModel, ExclusiveActivatable() {
+    private val hydrator = Hydrator("AlarmPopupChipViewModel.hydrator")
 
     override val chip: QuickActionChipModel by
-        callbackFlow<AlarmPopupState> {
-                var nextAlarm: AlarmManager.AlarmClockInfo? = null
-                fun emitState() {
-                    trySend(
-                        AlarmPopupState(
-                            nextAlarm = nextAlarm,
-                            activeNotification =
-                                notifCollection.allNotifs.firstOrNull { it.isAlarmCandidate() },
-                        )
-                    )
-                }
+        hydrator.hydratedStateOf(
+            traceName = "chip",
+            initialValue = QuickActionChipModel.Hidden(QuickActionChipId.Alarm),
+            source =
+                callbackFlow<AlarmPopupState> {
+                        var nextAlarm: AlarmManager.AlarmClockInfo? = null
+                        fun emitState() {
+                            trySend(
+                                AlarmPopupState(
+                                    nextAlarm = nextAlarm,
+                                    activeNotification =
+                                        notifCollection.allNotifs.firstOrNull {
+                                            it.isAlarmCandidate()
+                                        },
+                                )
+                            )
+                        }
 
-                val callback =
-                    NextAlarmController.NextAlarmChangeCallback { updatedAlarm ->
-                        nextAlarm = updatedAlarm
+                        val callback =
+                            NextAlarmController.NextAlarmChangeCallback { updatedAlarm ->
+                                nextAlarm = updatedAlarm
+                                emitState()
+                            }
+                        val notificationListener =
+                            object : NotifCollectionListener {
+                                override fun onEntryAdded(entry: NotificationEntry) = emitState()
+
+                                override fun onEntryUpdated(entry: NotificationEntry) = emitState()
+
+                                override fun onEntryRemoved(entry: NotificationEntry, reason: Int) =
+                                    emitState()
+
+                                override fun onRankingApplied() = emitState()
+                            }
+
+                        nextAlarmController.addCallback(callback)
+                        notifCollection.addCollectionListener(notificationListener)
                         emitState()
+                        awaitClose {
+                            nextAlarmController.removeCallback(callback)
+                            notifCollection.removeCollectionListener(notificationListener)
+                        }
                     }
-                val notificationListener =
-                    object : NotifCollectionListener {
-                        override fun onEntryAdded(entry: NotificationEntry) = emitState()
+                    .map(::toPopupChipModel)
+                    .combine(observeDynamicIslandFeatureEnabled(context, ALARMS)) { model, enabled ->
+                        if (enabled) model else QuickActionChipModel.Hidden(QuickActionChipId.Alarm)
+                    },
+        )
 
-                        override fun onEntryUpdated(entry: NotificationEntry) = emitState()
-
-                        override fun onEntryRemoved(entry: NotificationEntry, reason: Int) =
-                            emitState()
-
-                        override fun onRankingApplied() = emitState()
-                    }
-
-                nextAlarmController.addCallback(callback)
-                notifCollection.addCollectionListener(notificationListener)
-                emitState()
-                awaitClose {
-                    nextAlarmController.removeCallback(callback)
-                    notifCollection.removeCollectionListener(notificationListener)
-                }
-            }
-            .map(::toPopupChipModel)
-            .combine(
-                DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled(
-                    context,
-                    DynamicIslandFeatureSettings.ALARMS,
-                )
-            ) { model, enabled ->
-                if (enabled) model else QuickActionChipModel.Hidden(QuickActionChipId.Alarm)
-            }
-            .hydratedStateOf(
-                traceName = "chip",
-                initialValue = QuickActionChipModel.Hidden(QuickActionChipId.Alarm),
-            )
+    override suspend fun onActivated(): Nothing {
+        hydrator.activate()
+    }
 
     private fun toPopupChipModel(state: AlarmPopupState): QuickActionChipModel {
         val alarm = state.nextAlarm?.takeIf { it.triggerTime > 0L }
@@ -181,16 +186,16 @@ constructor(
             )
         val contentDescription =
             alarm?.let {
-                ContentDescription.Loaded(
-                    context.getString(
-                        R.string.accessibility_quick_settings_alarm,
-                        formatAlarmTime(it.triggerTime, skeleton = fullDescriptionSkeleton()),
-                    )
+                context.getString(
+                    R.string.accessibility_quick_settings_alarm,
+                    formatAlarmTime(it.triggerTime, skeleton = fullDescriptionSkeleton()),
                 )
-            } ?: ContentDescription.Loaded(model.title)
+            } ?: model.title
 
         return QuickActionChipModel.PopupChip(
             chipId = QuickActionChipId.Alarm,
+            sourcePackageName = activeNotification?.sbn?.packageName ?: alarm?.showIntent?.creatorPackage,
+            sourceUserId = activeNotification?.sbn?.userId ?: alarm?.showIntent?.creatorUserHandle?.identifier,
             icons =
                 listOf(
                     ChipIcon(
@@ -204,7 +209,7 @@ constructor(
                 ),
             chipContent = ChipContent.Text(model.chipTimeText),
             colors = ChipColors.DynamicIsland,
-            contentDescription = contentDescription,
+            contentDescription = ContentDescription.Loaded(contentDescription),
             popupContent = PopupContentModel.Alarm(model),
         )
     }
@@ -234,14 +239,31 @@ private data class AlarmPopupState(
 
 private fun NotificationEntry.isAlarmCandidate(): Boolean {
     val notification = sbn.notification
-    return notification.contentIntent != null &&
-        (
-            notification.category == Notification.CATEGORY_ALARM ||
-                sbn.packageName.contains("clock", ignoreCase = true) ||
-                notification.actions.orEmpty().any { action ->
-                    action.title?.toString()?.contains("snooze", ignoreCase = true) == true
-                }
-        )
+    if (notification.contentIntent == null) {
+        return false
+    }
+
+    // Ringing timers can also use CATEGORY_ALARM. Exclude timer and stopwatch metadata first.
+    val channelId = notification.channelId.orEmpty()
+    if (
+        notification.category == Notification.CATEGORY_STOPWATCH ||
+            notification.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN) ||
+            channelId.contains("timer", ignoreCase = true) ||
+            channelId.contains("stopwatch", ignoreCase = true) ||
+            notification.actions.orEmpty().any { action ->
+                val actionName =
+                    runCatching { action.actionIntent?.intent?.action }.getOrNull().orEmpty()
+                actionName.contains("timer", ignoreCase = true) ||
+                    actionName.contains("stopwatch", ignoreCase = true)
+            }
+    ) {
+        return false
+    }
+
+    return notification.category == Notification.CATEGORY_ALARM ||
+        notification.actions.orEmpty().any { action ->
+            action.title?.toString()?.contains("snooze", ignoreCase = true) == true
+        }
 }
 
 private fun NotificationEntry.notificationTitle(): String? {

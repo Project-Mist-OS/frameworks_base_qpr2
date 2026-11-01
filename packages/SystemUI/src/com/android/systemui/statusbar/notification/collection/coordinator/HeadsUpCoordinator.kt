@@ -17,6 +17,7 @@ package com.android.systemui.statusbar.notification.collection.coordinator
 
 import android.app.Notification
 import android.app.Notification.GROUP_ALERT_SUMMARY
+import android.view.Display
 import android.util.ArrayMap
 import android.util.ArraySet
 import com.android.internal.annotations.VisibleForTesting
@@ -47,6 +48,7 @@ import com.android.systemui.statusbar.notification.headsup.HeadsUpManager
 import com.android.systemui.statusbar.notification.headsup.OnHeadsUpChangedListener
 import com.android.systemui.statusbar.notification.headsup.PinnedStatus
 import com.android.systemui.statusbar.notification.interruption.HeadsUpViewBinder
+import com.android.systemui.statusbar.quickactions.popups.data.repository.DynamicIslandStateRepository
 import com.android.systemui.statusbar.notification.interruption.VisualInterruptionDecisionLogger
 import com.android.systemui.statusbar.notification.interruption.VisualInterruptionDecisionProvider
 import com.android.systemui.statusbar.notification.interruption.VisualInterruptionDecisionProviderImpl.DecisionImpl
@@ -97,6 +99,7 @@ constructor(
     private val statusBarChipsUiEventLogger: StatusBarChipsUiEventLogger,
     @IncomingHeader private val mIncomingHeaderController: NodeController,
     @Main private val mExecutor: DelayableExecutor,
+    private val dynamicIslandStateRepository: DynamicIslandStateRepository,
 ) : Coordinator {
     private val mEntriesBindingUntil = ArrayMap<String, Long>()
     private val mEntriesUpdateTimes = ArrayMap<String, Long>()
@@ -129,6 +132,29 @@ constructor(
         applicationScope.launch {
             statusBarNotificationChipsInteractor.promotedNotificationChipTapEvent.collect {
                 onPromotedNotificationChipTapEvent(it)
+            }
+        }
+
+        applicationScope.launch {
+            dynamicIslandStateRepository.states.collect { states ->
+                val callKeys = states[Display.DEFAULT_DISPLAY]?.callNotificationKeys.orEmpty()
+                var changed = false
+                for (key in callKeys) {
+                    mPostedEntries[key]?.let {
+                        changed = changed || it.shouldHeadsUpEver || it.shouldHeadsUpAgain
+                        it.shouldHeadsUpEver = false
+                        it.shouldHeadsUpAgain = false
+                    }
+                    if (mEntriesBindingUntil.containsKey(key)) {
+                        notifCollection.getEntry(key)?.let { cancelHeadsUpBind(it) }
+                        changed = true
+                    }
+                    if (mHeadsUpManager.isHeadsUpEntry(key)) {
+                        mHeadsUpManager.removeNotification(key, true)
+                        changed = true
+                    }
+                }
+                if (changed) mNotifPromoter.invalidateList("Dynamic Island call visibility changed")
             }
         }
     }
@@ -185,6 +211,12 @@ constructor(
     }
 
     private fun onHeadsUpViewBound(entry: NotificationEntry, isFromUserOpenAction: Boolean) {
+        if (dynamicIslandStateRepository.shouldSuppressCallHeadsUp(entry.sbn)) {
+            mEntriesBindingUntil.remove(entry.key)
+            mHeadsUpViewBinder.unbindHeadsUpView(entry)
+            mNotifPromoter.invalidateList("call shown in Dynamic Island")
+            return
+        }
         mHeadsUpManager.showNotification(entry, isFromUserOpenAction)
         mEntriesBindingUntil.remove(entry.key)
     }
@@ -490,6 +522,14 @@ constructor(
     private fun handlePostedEntry(posted: PostedEntry, hunMutator: HunMutator, scenario: String) {
         mLogger.logPostedEntryWillEvaluate(posted, scenario)
 
+        if (dynamicIslandStateRepository.shouldSuppressCallHeadsUp(posted.entry.sbn)) {
+            cancelHeadsUpBind(posted.entry)
+            if (mHeadsUpManager.isHeadsUpEntry(posted.key)) {
+                hunMutator.removeNotification(posted.key, true)
+            }
+            return
+        }
+
         if (posted.wasAdded) {
             if (posted.shouldHeadsUpEver) {
                 bindForAsyncHeadsUp(posted)
@@ -605,7 +645,8 @@ constructor(
                 val shouldHeadsUpEver =
                     mVisualInterruptionDecisionProvider
                         .makeAndLogHeadsUpDecision(entry)
-                        .shouldInterrupt
+                        .shouldInterrupt &&
+                        !dynamicIslandStateRepository.shouldSuppressCallHeadsUp(entry.sbn)
                 mPostedEntries[entry.key] =
                     PostedEntry(
                         entry,
@@ -664,10 +705,11 @@ constructor(
                 // heads up, we should not bother evaluating for interruption; just set the values
                 // to ensure we continue to show the heads up without starting it again.
                 val shouldHeadsUpEver =
-                    isSilentSystemServerUpdateDuringHeadsUp ||
+                    (isSilentSystemServerUpdateDuringHeadsUp ||
                         mVisualInterruptionDecisionProvider
                             .makeAndLogHeadsUpDecision(entry)
-                            .shouldInterrupt
+                            .shouldInterrupt) &&
+                        !dynamicIslandStateRepository.shouldSuppressCallHeadsUp(entry.sbn)
                 val shouldHeadsUpAgain =
                     !isSilentSystemServerUpdateDuringHeadsUp && shouldHunAgain(entry)
 
@@ -804,7 +846,9 @@ constructor(
                     //   differs from the updated one
                     val decision =
                         mVisualInterruptionDecisionProvider.makeUnloggedHeadsUpDecision(entry)
-                    val shouldHeadsUpEver = decision.shouldInterrupt
+                    val shouldHeadsUpEver =
+                        decision.shouldInterrupt &&
+                            !dynamicIslandStateRepository.shouldSuppressCallHeadsUp(entry.sbn)
                     val postedEntry = mPostedEntries[entry.key]
                     val postedShouldHeadsUpEver = postedEntry?.shouldHeadsUpEver ?: false
                     val updatedSource = postedEntry?.wasUpdatedBy ?: UpdateSource.SystemServer

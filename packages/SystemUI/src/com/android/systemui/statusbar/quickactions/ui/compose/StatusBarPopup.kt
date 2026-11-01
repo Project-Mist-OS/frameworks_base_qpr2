@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 The Android Open Source Project
+ * Copyright (C) 2024 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,301 +16,351 @@
 
 package com.android.systemui.statusbar.quickactions.ui.compose
 
-import android.util.Log
+import android.content.Context
 import android.view.ViewTreeObserver
-import androidx.compose.animation.AnimatedVisibility
+import android.view.WindowManager
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.unit.Density
+import androidx.compose.ui.res.dimensionResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.dismiss
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.android.systemui.res.R
-import com.android.systemui.statusbar.quickactions.alarm.ui.compose.AlarmPopup
 import com.android.systemui.statusbar.quickactions.flashlight.ui.compose.FlashlightPopup
-import com.android.systemui.statusbar.quickactions.livescore.ui.compose.LiveScorePopup
 import com.android.systemui.statusbar.quickactions.media.ui.compose.LyricsCard
 import com.android.systemui.statusbar.quickactions.media.ui.compose.MediaControlPopup
-import com.android.systemui.statusbar.quickactions.screenrecord.ui.compose.ScreenRecordPopup
-import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.media.ui.compose.RedesignedMediaPopup
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
-import com.android.systemui.statusbar.quickactions.stopwatch.ui.compose.StopwatchPopup
-import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.POPUP_COLOR_MODE_BLUR
-import kotlinx.coroutines.coroutineScope
+import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.popups.ui.model.SystemEventKind
 import kotlinx.coroutines.launch
 
-private const val TAG = "DynamicIslandDebug"
-/**
- * Displays a popup in the status bar area. The offset is calculated to draw the popup below the
- * status bar. When [chipBoundsInScreen] is provided, the popup grows out of the chip's on-screen
- * position and aspect ratio with an independent-axis squish animation, rather than a generic
- * uniform scale-in.
- */
+/** Displays an island card that grows from, and returns to, the tapped capsule. */
 @Composable
 fun StatusBarPopup(
     viewModel: QuickActionChipModel.PopupChip,
     isVisible: Boolean,
     chipBoundsInScreen: Rect? = null,
+    canPage: Boolean = false,
+    pageDirection: Int = 1,
+    onPage: (Int) -> Unit = {},
+    onHidden: () -> Unit = {},
 ) {
-    val density = Density(LocalContext.current)
+    MistBarContentTheme(viewModel.popupContent, viewModel.chipId) {
+        MistBarPopupWindow(
+            viewModel,
+            isVisible,
+            chipBoundsInScreen,
+            canPage,
+            pageDirection,
+            onPage,
+            onHidden,
+        )
+    }
+}
+
+@Composable
+private fun MistBarPopupWindow(
+    viewModel: QuickActionChipModel.PopupChip,
+    isVisible: Boolean,
+    chipBoundsInScreen: Rect?,
+    canPage: Boolean,
+    pageDirection: Int,
+    onPage: (Int) -> Unit,
+    onHidden: () -> Unit,
+) {
+    val density = LocalDensity.current
+    val settings = LocalMistBarState.current.settings
+    val topInsetPx =
+        with(density) {
+            dimensionResource(R.dimen.status_bar_height).roundToPx() + 8.dp.roundToPx()
+        }
+    val currentHidePopup by rememberUpdatedState(viewModel.hidePopup)
     Popup(
-        alignment = Alignment.TopCenter,
-        offset =
-            IntOffset(
-                x = 0,
-                y =
-                    with(density) {
-                        LocalContext.current.resources
-                            .getDimensionPixelSize(R.dimen.status_bar_height)
-                            .plus(4.dp.roundToPx())
-                    },
-            ),
-        onDismissRequest = { viewModel.hidePopup() },
+        popupPositionProvider =
+            remember {
+                object : PopupPositionProvider {
+                    override fun calculatePosition(
+                        anchorBounds: IntRect,
+                        windowSize: IntSize,
+                        layoutDirection: LayoutDirection,
+                        popupContentSize: IntSize,
+                    ) = IntOffset.Zero
+                }
+            },
         properties =
             PopupProperties(
-                focusable = false,
+                flags =
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                        WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 dismissOnBackPress = true,
                 dismissOnClickOutside = true,
             ),
+        onDismissRequest = { currentHidePopup() },
     ) {
         val popupView = LocalView.current
-        var popupBoundsInScreen by remember { mutableStateOf<Rect?>(null) }
-
-        LaunchedEffect(viewModel.chipId, viewModel.popupContent, isVisible) {
-            if (isVisible) {
-                Log.d(
-                    TAG,
-                    "DynamicIsland: popup model = ${viewModel.popupContent::class.simpleName} for ${viewModel.chipId}",
-                )
-            }
-        }
-
-        val transformOrigin by remember {
-            derivedStateOf {
-                val chip = chipBoundsInScreen
-                val popup = popupBoundsInScreen
-                if (chip == null || popup == null || popup.width <= 0f) {
-                    TransformOrigin(0.5f, 0f)
-                } else {
-                    val pivotX =
-                        ((chip.center.x - popup.left) / popup.width).coerceIn(0.05f, 0.95f)
-                    val pivotY =
-                        if (popup.height > 0f) {
-                            ((chip.center.y - popup.top) / popup.height).coerceIn(0f, 0.3f)
-                        } else {
-                            0f
-                        }
-                    TransformOrigin(pivotX, pivotY)
-                }
-            }
-        }
-
-        val initialScaleFromChip by remember {
-            derivedStateOf {
-                val chip = chipBoundsInScreen
-                val popup = popupBoundsInScreen
-                if (chip == null || popup == null || popup.width <= 0f || popup.height <= 0f) {
-                    Offset(0.4f, 0.4f)
-                } else {
-                    Offset(
-                        x = (chip.width / popup.width).coerceIn(0.2f, 1f),
-                        y = (chip.height / popup.height).coerceIn(0.15f, 1f),
-                    )
-                }
-            }
-        }
-
-        val scaleX = remember { Animatable(initialScaleFromChip.x) }
-        val scaleY = remember { Animatable(initialScaleFromChip.y) }
-        val alpha = remember { Animatable(0f) }
-        val translationY = remember { Animatable(-24f) }
-        val colorMode = rememberPopupColorMode()
-        val skipMotionOnDismiss = colorMode == POPUP_COLOR_MODE_BLUR
-
-        LaunchedEffect(isVisible) {
-            if (isVisible) {
-                scaleX.snapTo(initialScaleFromChip.x)
-                scaleY.snapTo(initialScaleFromChip.y)
-                alpha.snapTo(0f)
-                translationY.snapTo(-24f)
-                coroutineScope {
-                    launch {
-                        scaleX.animateTo(
-                            targetValue = 1f,
-                            animationSpec =
-                                spring(
-                                    dampingRatio = 0.6f,
-                                    stiffness = Spring.StiffnessLow,
-                                ),
-                        )
-                    }
-                    launch {
-                        scaleY.animateTo(
-                            targetValue = 1f,
-                            animationSpec =
-                                spring(
-                                    dampingRatio = 0.65f,
-                                    stiffness = Spring.StiffnessLow,
-                                ),
-                        )
-                    }
-                    launch {
-                        translationY.animateTo(
-                            targetValue = 0f,
-                            animationSpec =
-                                spring(
-                                    dampingRatio = 0.7f,
-                                    stiffness = Spring.StiffnessMediumLow,
-                                ),
-                        )
-                    }
-                    launch { alpha.animateTo(1f, animationSpec = tween(180)) }
-                }
-            } else {
-                if (skipMotionOnDismiss) {
-                    coroutineScope {
-                        launch {
-                            scaleX.animateTo(
-                                targetValue = 0.01f,
-                                animationSpec = tween(130),
-                            )
-                        }
-                        launch {
-                            scaleY.animateTo(
-                                targetValue = 0.01f,
-                                animationSpec = tween(130),
-                            )
-                        }
-                        launch { alpha.animateTo(0f, animationSpec = tween(120)) }
-                    }
-                } else {
-                coroutineScope {
-                    launch {
-                        scaleX.animateTo(
-                            targetValue = initialScaleFromChip.x,
-                            animationSpec =
-                                spring(
-                                    dampingRatio = 0.8f,
-                                    stiffness = Spring.StiffnessMediumLow,
-                                ),
-                        )
-                    }
-                    launch {
-                        scaleY.animateTo(
-                            targetValue = initialScaleFromChip.y,
-                            animationSpec =
-                                spring(
-                                    dampingRatio = 0.8f,
-                                    stiffness = Spring.StiffnessMediumLow,
-                                ),
-                        )
-                    }
-                    launch {
-                        translationY.animateTo(
-                            targetValue = -16f,
-                            animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                        )
-                    }
-                    launch { alpha.animateTo(0f, animationSpec = tween(160)) }
-                    }
-                }
-            }
-        }
-
         DisposableEffect(popupView) {
-            val listener =
-                ViewTreeObserver.OnComputeInternalInsetsListener { info ->
-                    info.setTouchableInsets(
-                        ViewTreeObserver.InternalInsetsInfo.TOUCHABLE_INSETS_FRAME
-                    )
-                }
-            popupView.viewTreeObserver.addOnComputeInternalInsetsListener(listener)
-            onDispose {
-                popupView.viewTreeObserver.removeOnComputeInternalInsetsListener(listener)
+            val windowView = popupView.rootView
+            val params = windowView.layoutParams as? WindowManager.LayoutParams
+            if (params != null && windowView.isAttachedToWindow) {
+                params.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                params.setFitInsetsTypes(0)
+                params.windowAnimations = 0
+                val manager =
+                    windowView.context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                manager.updateViewLayout(windowView, params)
             }
+            val listener =
+                ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
+                    if (!hasFocus) currentHidePopup()
+                }
+            popupView.viewTreeObserver.addOnWindowFocusChangeListener(listener)
+            onDispose { popupView.viewTreeObserver.removeOnWindowFocusChangeListener(listener) }
         }
-
-        AnimatedVisibility(
-            visible = isVisible,
-            enter = fadeIn(animationSpec = tween(60)),
-            exit = fadeOut(animationSpec = tween(160)),
+        MistBarPopupMotion(
+            isVisible = isVisible,
+            chipBoundsInScreen = chipBoundsInScreen,
+            topInsetPx = topInsetPx,
+            onDismissRequest = { currentHidePopup() },
+            onHidden = onHidden,
+            fastEnter =
+                (viewModel.popupContent as? PopupContentModel.SystemEvent)?.kind ==
+                    SystemEventKind.Unlock,
+            useRedesignedMediaBackground =
+                LocalMistBarState.current.alternativeMedia &&
+                    (viewModel.popupContent as? PopupContentModel.Media)?.useRedesignedMedia ==
+                        true,
+            secondaryContent = {
+                val media = viewModel.popupContent as? PopupContentModel.Media
+                if (
+                    media != null &&
+                        (!media.model.lyrics.isNullOrBlank() ||
+                            !media.model.syncedLyrics.isNullOrBlank())
+                ) {
+                    LyricsCard(model = media.model, useRedesignedMedia = false)
+                }
+            },
         ) {
-            Box(
-                modifier =
-                    Modifier.padding(8.dp)
-                        .wrapContentSize()
-                        .onGloballyPositioned { coordinates ->
-                            popupBoundsInScreen = coordinates.boundsInScreen(popupView)
-                        }
-                        .graphicsLayer {
-                            this.scaleX = scaleX.value
-                            this.scaleY = scaleY.value
-                            this.alpha = alpha.value
-                            this.translationY = translationY.value
-                            this.transformOrigin = transformOrigin
-                        }
-            ) {
-                when (val popupContent = viewModel.popupContent) {
-                    is PopupContentModel.Media -> {
-                        val model = popupContent.model
-                        val seekBarStyle = popupContent.seekBarStyle
-                        val hasLyrics =
-                            !model.lyrics.isNullOrBlank() || !model.syncedLyrics.isNullOrBlank()
-                        if (hasLyrics) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                MediaControlPopup(model = model, seekBarStyle = seekBarStyle)
-                                LyricsCard(model = model)
-                            }
-                        } else {
-                            MediaControlPopup(model = model, seekBarStyle = seekBarStyle)
-                        }
+            val pagerScope = rememberCoroutineScope()
+            val pageFollow = remember(viewModel.chipId) { Animatable(0f) }
+            var pageAccumulator by remember(viewModel.chipId) { mutableFloatStateOf(0f) }
+            var followJob by
+                remember(viewModel.chipId) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+            val notification =
+                (viewModel.popupContent as? PopupContentModel.SystemEvent)?.kind ==
+                    SystemEventKind.Notification
+            val currentDismissNotification by rememberUpdatedState(viewModel.dismissNotification)
+            val dismissLabel = stringResource(R.string.mist_bar_swipe_dismiss)
+            val pageThresholdPx = with(density) { 56.dp.toPx() }
+            val maxFollowPx = with(density) { 40.dp.toPx() }
+            val currentOnPage by rememberUpdatedState(onPage)
+
+            Box(modifier = Modifier.wrapContentSize()) {
+                Box(
+                    modifier =
+                        Modifier.then(
+                                if (notification || canPage) {
+                                    Modifier.pointerInput(viewModel.chipId, notification, canPage) {
+                                        detectHorizontalDragGestures(
+                                            onDragEnd = {
+                                                val direction =
+                                                    when {
+                                                        pageAccumulator <= -pageThresholdPx -> 1
+                                                        pageAccumulator >= pageThresholdPx -> -1
+                                                        else -> 0
+                                                    }
+                                                pageAccumulator = 0f
+                                                followJob?.cancel()
+                                                followJob =
+                                                    pagerScope.launch {
+                                                        pageFollow.animateTo(
+                                                            0f,
+                                                            spring(
+                                                                dampingRatio =
+                                                                    Spring.DampingRatioNoBouncy,
+                                                                stiffness = Spring.StiffnessMedium,
+                                                            ),
+                                                        )
+                                                    }
+                                                if (direction != 0) {
+                                                    if (notification) {
+                                                        currentHidePopup()
+                                                        currentDismissNotification?.invoke()
+                                                    } else currentOnPage(direction)
+                                                }
+                                            },
+                                            onDragCancel = {
+                                                pageAccumulator = 0f
+                                                followJob?.cancel()
+                                                followJob =
+                                                    pagerScope.launch {
+                                                        pageFollow.animateTo(
+                                                            0f,
+                                                            spring(
+                                                                dampingRatio =
+                                                                    Spring.DampingRatioMediumBouncy,
+                                                                stiffness = Spring.StiffnessMedium,
+                                                            ),
+                                                        )
+                                                    }
+                                            },
+                                            onHorizontalDrag = { change, dragAmount ->
+                                                pageAccumulator += dragAmount
+                                                val target =
+                                                    (pageAccumulator * 0.5f).coerceIn(
+                                                        -maxFollowPx,
+                                                        maxFollowPx,
+                                                    )
+                                                followJob?.cancel()
+                                                followJob =
+                                                    pagerScope.launch { pageFollow.snapTo(target) }
+                                                change.consume()
+                                            },
+                                        )
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .then(
+                                if (notification)
+                                    Modifier.semantics {
+                                        stateDescription = dismissLabel
+                                        dismiss {
+                                            currentHidePopup()
+                                            currentDismissNotification?.invoke()
+                                            true
+                                        }
+                                    }
+                                else Modifier
+                            )
+                            .graphicsLayer { translationX = pageFollow.value }
+                ) {
+                    AnimatedContent(
+                        targetState = viewModel,
+                        contentAlignment = Alignment.TopCenter,
+                        contentKey = { it.chipId },
+                        transitionSpec = {
+                            val dir = if (pageDirection >= 0) 1 else -1
+                            (slideInHorizontally(
+                                animationSpec =
+                                    tween(
+                                        if (settings.isReducedMotion) 0
+                                        else (280 / settings.animationSpeed).toInt()
+                                    )
+                            ) { w ->
+                                dir * w
+                            } +
+                                fadeIn(
+                                    animationSpec =
+                                        tween(
+                                            if (settings.isReducedMotion) 0
+                                            else (200 / settings.animationSpeed).toInt()
+                                        )
+                                )) togetherWith
+                                (slideOutHorizontally(
+                                    animationSpec =
+                                        tween(
+                                            if (settings.isReducedMotion) 0
+                                            else (240 / settings.animationSpeed).toInt()
+                                        )
+                                ) { w ->
+                                    -dir * w
+                                } +
+                                    fadeOut(
+                                        animationSpec =
+                                            tween(
+                                                if (settings.isReducedMotion) 0
+                                                else (140 / settings.animationSpeed).toInt()
+                                            )
+                                    )) using
+                                null
+                        },
+                        label = "island_popup_pager",
+                    ) { chip ->
+                        IslandPopupContent(chip)
                     }
-                    is PopupContentModel.ScreenRecord -> ScreenRecordPopup(model = popupContent.model)
-                    is PopupContentModel.LiveScore -> LiveScorePopup(model = popupContent.model)
-                    is PopupContentModel.Flashlight -> FlashlightPopup(model = popupContent.model)
-                    is PopupContentModel.Stopwatch -> StopwatchPopup(model = popupContent.model)
-                    is PopupContentModel.Alarm -> AlarmPopup(model = popupContent.model)
-                    PopupContentModel.None -> Unit
                 }
             }
         }
     }
 }
 
-private fun LayoutCoordinates.boundsInScreen(view: android.view.View): Rect {
-    val location = IntArray(2)
-    view.getLocationOnScreen(location)
-    return boundsInRoot().translate(Offset(location[0].toFloat(), location[1].toFloat()))
+/** Renders the per-feature card for [viewModel]; the swipe pager slides between these. */
+@Composable
+private fun IslandPopupContent(viewModel: QuickActionChipModel.PopupChip) {
+    when (val popupContent = viewModel.popupContent) {
+        is PopupContentModel.Utility ->
+            MistBarUtilityCard(popupContent.card, viewModel.hidePopup)
+        is PopupContentModel.Media -> {
+            val model = popupContent.model
+            val seekBarStyle = popupContent.seekBarStyle
+            if (!LocalMistBarState.current.alternativeMedia) {
+                MistBarMediaPopup(model = model, seekBarStyle = seekBarStyle)
+            } else if (popupContent.useRedesignedMedia) {
+                RedesignedMediaPopup(model = model, seekBarStyle = seekBarStyle)
+            } else {
+                MediaControlPopup(model = model, seekBarStyle = seekBarStyle)
+            }
+        }
+        is PopupContentModel.ScreenRecord -> MistBarScreenRecordPopup(model = popupContent.model)
+        is PopupContentModel.LiveScore -> MistBarLiveScorePopup(model = popupContent.model)
+        is PopupContentModel.Flashlight -> {
+            if (LocalMistBarState.current.alternativeFlashlight) {
+                FlashlightPopup(
+                    model = popupContent.model,
+                    hapticsViewModelFactory = popupContent.hapticsViewModelFactory,
+                    modifier =
+                        if (LocalMistBarState.current.settings.isFullWidth) Modifier.fillMaxWidth()
+                        else Modifier,
+                )
+            } else {
+                MistBarFlashlightPopup(model = popupContent.model)
+            }
+        }
+        is PopupContentModel.Stopwatch -> MistBarStopwatchPopup(model = popupContent.model)
+        is PopupContentModel.Alarm -> MistBarAlarmPopup(model = popupContent.model)
+        is PopupContentModel.SystemEvent -> SystemEventPopup(model = popupContent)
+        PopupContentModel.None -> MistBarPrivacyPopup(viewModel)
+    }
 }

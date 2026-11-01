@@ -16,7 +16,7 @@
 
 package com.android.systemui.statusbar.quickactions.screenrecord.shared.model
 
-/** Popup content for screen recording inside the dynamic island. */
+/** Popup content for the status bar screen recording island. */
 sealed interface ScreenRecordPopupModel {
     data class Starting(val secondsUntilStarted: Long) : ScreenRecordPopupModel
 

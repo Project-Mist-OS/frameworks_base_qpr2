@@ -58,6 +58,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.observeDynamicIslandEnabled
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.readDynamicIslandEnabled
 import kotlinx.coroutines.launch
 import lineageos.providers.LineageSettings
 
@@ -185,8 +187,7 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                             denyListed = false,
                             hideForHun = false,
                             chipStyle = 0,
-                            dynamicIslandEnabled =
-                                context.contentResolver.readDynamicIslandEnabled(),
+                            dynamicIslandEnabled = readDynamicIslandEnabled(context),
                             position = context.contentResolver.readClockPosition(),
                             visibilityModel = VisibilityModel(View.GONE, true),
                             gradientStartColor = context.contentResolver.readGradientStartColor(),
@@ -314,8 +315,7 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                                        )
                                     dynamicIslandUri ->
                                         current.copy(
-                                            dynamicIslandEnabled =
-                                                context.contentResolver.readDynamicIslandEnabled()
+                                            dynamicIslandEnabled = readDynamicIslandEnabled(context)
                                        )
                                     else -> current
                                 }
@@ -334,6 +334,13 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
                         UserHandle.USER_ALL,
                     )
                     contentObserver.onChange(false, uri)
+                }
+
+                // Also follows orientation changes and the "disable in landscape" option.
+                launch {
+                    observeDynamicIslandEnabled(context).collect { enabled ->
+                        clockState.update { it.copy(dynamicIslandEnabled = enabled) }
+                    }
                 }
 
                 // Ensure cleanup when lifecycle ends
@@ -600,15 +607,6 @@ class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinde
             0,
             UserHandle.USER_CURRENT,
         )
-    }
-
-    private fun ContentResolver.readDynamicIslandEnabled(): Boolean {
-        return Settings.System.getIntForUser(
-            this,
-            Settings.System.STATUS_BAR_SHOW_DYNAMIC_ISLAND,
-            0,
-            UserHandle.USER_CURRENT,
-        ) != 0
     }
 
     private fun ContentResolver.readClockPosition(): Int {

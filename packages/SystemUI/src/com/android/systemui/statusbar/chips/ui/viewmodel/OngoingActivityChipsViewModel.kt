@@ -18,8 +18,11 @@ package com.android.systemui.statusbar.chips.ui.viewmodel
 
 import android.graphics.RectF
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayAware
+import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.DisplayId
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import com.android.systemui.display.domain.interactor.DisplayStateInteractor
+import com.android.systemui.statusbar.quickactions.popups.data.repository.DynamicIslandState
+import com.android.systemui.statusbar.quickactions.popups.data.repository.DynamicIslandStateRepository
 import com.android.systemui.log.LogBuffer
 import com.android.systemui.log.core.LogLevel
 import com.android.systemui.screencapture.record.domain.interactor.ScreenCaptureRecordFeaturesInteractor
@@ -66,6 +69,8 @@ constructor(
     private val screenCaptureRecordFeaturesInteractor: ScreenCaptureRecordFeaturesInteractor,
     private val chipsRefiners: Set<@JvmSuppressWildcards OngoingActivityChipsRefiner>,
     @StatusBarChipsLog private val logger: LogBuffer,
+    @DisplayId displayId: Int,
+    dynamicIslandStateRepository: DynamicIslandStateRepository,
 ) {
     private enum class ChipType {
         ScreenRecord,
@@ -146,6 +151,32 @@ constructor(
                         notifs = notifs,
                     )
                 }
+            }
+            // Hide chips the dynamic island is already presenting (calls, screen recording).
+            .combine(dynamicIslandStateRepository.states) { bundle, states ->
+                val island = states[displayId] ?: DynamicIslandState()
+                val callKey =
+                    (bundle.call as? OngoingActivityChipModel.Active)
+                        ?.key
+                        ?.removePrefix(CallChipViewModel.KEY_PREFIX)
+                bundle.copy(
+                    screenRecord =
+                        if (island.isScreenRecordingShown) {
+                            OngoingActivityChipModel.Inactive(shouldAnimate = false)
+                        } else bundle.screenRecord,
+                    shareToApp =
+                        if (island.isScreenRecordingShown) {
+                            OngoingActivityChipModel.Inactive(shouldAnimate = false)
+                        } else bundle.shareToApp,
+                    call =
+                        if (callKey != null && callKey in island.callNotificationKeys) {
+                            OngoingActivityChipModel.Inactive(
+                                shouldAnimate = false,
+                                transitionManager = bundle.call.transitionManager,
+                            )
+                        } else bundle.call,
+                    notifs = bundle.notifs.filterNot { it.key in island.callNotificationKeys },
+                )
             }
             // Some of the chips could have timers in them and we don't want the start time for
             // those timers to get reset for any reason. So, as soon as any subscriber has requested

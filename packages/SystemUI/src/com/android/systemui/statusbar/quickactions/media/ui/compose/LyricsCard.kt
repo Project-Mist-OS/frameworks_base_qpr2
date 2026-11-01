@@ -16,7 +16,9 @@
 
 package com.android.systemui.statusbar.quickactions.media.ui.compose
 
+import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,13 +29,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,9 +46,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.systemui.statusbar.quickactions.media.shared.model.MediaControlChipModel
-import com.android.systemui.statusbar.quickactions.ui.compose.PopupSurface
-
-private val PopupShape = RoundedCornerShape(34.dp)
+import com.android.systemui.statusbar.quickactions.ui.compose.LocalMistBarColors
+import com.android.systemui.statusbar.quickactions.ui.compose.LocalMistBarState
+import com.android.systemui.statusbar.quickactions.ui.compose.MistBarSurface
+import kotlinx.coroutines.delay
 
 data class LyricLine(val timestampMs: Long, val text: String)
 
@@ -53,64 +57,99 @@ data class LyricLine(val timestampMs: Long, val text: String)
 fun LyricsCard(
     model: MediaControlChipModel,
     modifier: Modifier = Modifier,
+    useRedesignedMedia: Boolean = false,
 ) {
     val syncedLyrics = model.syncedLyrics
     val plainLyrics = model.lyrics
 
-    val lyricLines = remember(syncedLyrics) {
-        if (syncedLyrics.isNullOrBlank()) emptyList() else parseLrc(syncedLyrics)
-    }
+    val lyricLines =
+        remember(syncedLyrics) {
+            if (syncedLyrics.isNullOrBlank()) emptyList() else parseLrc(syncedLyrics)
+        }
 
-    PopupSurface(
-        shape = PopupShape,
-        modifier = modifier.widthIn(min = 320.dp, max = 400.dp).height(200.dp),
+    val settings = LocalMistBarState.current.settings
+    var positionMs by
+        remember(model.packageName, model.songName) { mutableLongStateOf(model.positionMs) }
+    LaunchedEffect(
+        model.packageName,
+        model.songName,
+        syncedLyrics,
+        model.positionMs,
+        model.isPlaying,
+        model.playbackSpeed,
     ) {
+        val start = SystemClock.elapsedRealtime()
+        do {
+            positionMs =
+                model.positionMs +
+                    if (model.isPlaying)
+                        ((SystemClock.elapsedRealtime() - start) * model.playbackSpeed).toLong()
+                    else 0L
+            if (!model.isPlaying) break
+            delay(200)
+        } while (true)
+    }
+    val colors = LocalMistBarColors.current
+    MistBarSurface(modifier = modifier.widthIn(max = 480.dp).fillMaxWidth().height(200.dp)) {
         if (lyricLines.isNotEmpty()) {
-            val positionMs = model.positionMs
-            val activeIndex by remember(lyricLines, positionMs) {
-                derivedStateOf {
-                    var index = -1
-                    for (i in lyricLines.indices) {
-                        if (positionMs >= lyricLines[i].timestampMs) {
-                            index = i
-                        } else {
-                            break
+            val activeIndex by
+                remember(lyricLines, positionMs) {
+                    derivedStateOf {
+                        var index = -1
+                        for (i in lyricLines.indices) {
+                            if (positionMs >= lyricLines[i].timestampMs) {
+                                index = i
+                            } else {
+                                break
+                            }
                         }
+                        index
                     }
-                    index
                 }
-            }
 
             val lazyListState = rememberLazyListState()
 
             LaunchedEffect(activeIndex) {
                 if (activeIndex >= 0 && activeIndex < lyricLines.size) {
-                    lazyListState.animateScrollToItem(activeIndex)
+                    if (settings.isReducedMotion) lazyListState.scrollToItem(activeIndex)
+                    else lazyListState.animateScrollToItem(activeIndex)
                 }
             }
 
             LazyColumn(
                 state = lazyListState,
                 contentPadding = PaddingValues(vertical = 80.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                horizontalAlignment = Alignment.Start,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             ) {
                 itemsIndexed(lyricLines) { index, line ->
                     val isActive = index == activeIndex
-                    val alpha by animateFloatAsState(if (isActive) 1f else 0.4f, label = "lyric_alpha")
+                    val alpha by
+                        animateFloatAsState(
+                            if (isActive) 1f else 0.4f,
+                            animationSpec =
+                                androidx.compose.animation.core.tween(
+                                    if (settings.isReducedMotion) 0 else 200
+                                ),
+                            label = "lyric_alpha",
+                        )
                     val scale = if (isActive) 1.1f else 0.9f
                     val fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
 
                     Text(
                         text = line.text,
-                        color = LocalContentColor.current,
+                        color = if (isActive) colors.accent else colors.content,
                         fontSize = (16.sp * scale),
                         fontWeight = fontWeight,
-                        textAlign = TextAlign.Center,
+                        textAlign = TextAlign.Start,
                         modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp)
+                            Modifier.fillMaxWidth()
+                                .background(
+                                    if (isActive) colors.accent.copy(alpha = 0.1f)
+                                    else Color.Transparent,
+                                    RoundedCornerShape(16.dp),
+                                )
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
                                 .alpha(alpha),
                     )
                 }
@@ -118,7 +157,7 @@ fun LyricsCard(
         } else if (!plainLyrics.isNullOrBlank()) {
             LazyColumn(
                 contentPadding = PaddingValues(vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                horizontalAlignment = Alignment.Start,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
             ) {
                 item {
@@ -126,7 +165,7 @@ fun LyricsCard(
                         text = plainLyrics,
                         color = LocalContentColor.current.copy(alpha = 0.8f),
                         fontSize = 15.sp,
-                        textAlign = TextAlign.Center,
+                        textAlign = TextAlign.Start,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -141,13 +180,14 @@ private fun parseLrc(lrcText: String): List<LyricLine> {
     lrcText.split("\n").forEach { lineStr ->
         val match = pattern.matchEntire(lineStr.trim())
         if (match != null) {
-            val min = match.groupValues[1].toLong()
-            val sec = match.groupValues[2].toLong()
-            val frac = match.groupValues[3].takeIf { it.isNotEmpty() }?.toLong() ?: 0L
-            val fracMs = if (match.groupValues[3].length == 3) frac else frac * 10L
+            val min =
+                match.groupValues[1].toLongOrNull()?.takeIf { it < Long.MAX_VALUE / 60000L }
+                    ?: return@forEach
+            val sec = match.groupValues[2].toLongOrNull()?.takeIf { it < 60L } ?: return@forEach
+            val fracMs = match.groupValues[3].padEnd(3, '0').take(3).toLongOrNull() ?: 0L
             val timestampMs = (min * 60 + sec) * 1000L + fracMs
             val text = match.groupValues[4].trim()
-            if (text.isNotEmpty() || lines.isNotEmpty()) { // Skip initial empty lines
+            if (text.isNotEmpty() || lines.isNotEmpty()) {
                 lines.add(LyricLine(timestampMs, text))
             }
         }

@@ -386,16 +386,19 @@ fun StatusBarRoot(
 
                 // Add a composable container for `QuickActionChip`s (Music Ticker, etc.)
                 val centeredArea =
-                    phoneStatusBarView.requireViewById<AlphaOptimizedLinearLayout>(
-                        R.id.centered_area
-                    )
+                    phoneStatusBarView.requireViewById<FrameLayout>(R.id.centered_area).apply {
+                        clipChildren = false
+                        clipToPadding = false
+                    }
 
                 val composeView =
                     ComposeView(context).apply {
+                        clipChildren = false
+                        clipToPadding = false
                         layoutParams =
-                            LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.WRAP_CONTENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT,
+                            FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.WRAP_CONTENT,
                             ).apply { gravity = Gravity.CENTER }
 
                         setViewCompositionStrategy(
@@ -409,7 +412,11 @@ fun StatusBarRoot(
                         setContent {
                             StatusBarDynamicIslandContainer(
                                 chips = statusBarViewModel.popupChips.filterIsInstance<QuickActionChipModel.PopupChip>(),
+                                mediaTransitionChip = statusBarViewModel.mediaTransitionChip,
                                 onMediaControlPopupVisibilityChanged = {},
+                                onIslandActiveChanged = { active ->
+                                    visibility = if (active) View.VISIBLE else View.GONE
+                                },
                                 onIslandBoundsChanged = { bounds ->
                                     islandBoundsState.value = bounds
                                     collapseOverlappingStatusIcons(

@@ -212,5 +212,12 @@ interface ISystemUiProxy {
      */
     oneway void onSleepEvent(in MotionEvent event) = 63;
 
-    // Next id = 64
+    /**
+     * Returns the bounds the Mist Bar (status bar dynamic island) is expected to occupy for the
+     * given app, so the launcher can animate an app into or out of it. Returns null if the app was
+     * not launched from the Mist Bar.
+     */
+    Rect getMistBarTarget(String packageName, int userId, int displayId, int rotation) = 64;
+
+    // Next id = 65
 }

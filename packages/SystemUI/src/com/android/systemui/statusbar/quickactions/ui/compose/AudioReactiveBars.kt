@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 The Android Open Source Project
+ * Copyright (C) 2024-2026 Lunaris AOSP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,12 +20,13 @@ import android.graphics.drawable.Drawable
 import android.media.audiofx.Visualizer
 import android.os.Handler
 import android.os.Looper
-import androidx.compose.animation.animateColorAsState
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.InfiniteRepeatableSpec
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -48,19 +49,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.palette.graphics.Palette
 import kotlin.math.abs
 import kotlin.math.sqrt
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private const val BAR_COUNT = 4
+
+private const val STALE_SIGNAL_TIMEOUT_MS = 400L
 
 private val PausedRestLevels = floatArrayOf(0.20f, 0.35f, 0.35f, 0.20f)
 
@@ -74,7 +78,7 @@ private val SettleSpring = spring<Float>(
     stiffness = 140f,
 )
 
-private data class BarWaveConfig(
+private data class IdleConfig(
     val minLevel: Float,
     val maxLevel: Float,
     val durationMs: Int,
@@ -82,17 +86,10 @@ private data class BarWaveConfig(
 )
 
 private val IdleConfigs = arrayOf(
-    BarWaveConfig(minLevel = 0.14f, maxLevel = 0.26f, durationMs = 2600, phaseOffsetMs = 300),
-    BarWaveConfig(minLevel = 0.22f, maxLevel = 0.42f, durationMs = 2200, phaseOffsetMs = 0),
-    BarWaveConfig(minLevel = 0.22f, maxLevel = 0.42f, durationMs = 2200, phaseOffsetMs = 150),
-    BarWaveConfig(minLevel = 0.14f, maxLevel = 0.26f, durationMs = 2600, phaseOffsetMs = 450),
-)
-
-private val PlayingConfigs = arrayOf(
-    BarWaveConfig(minLevel = 0.22f, maxLevel = 0.88f, durationMs = 380, phaseOffsetMs = 0),
-    BarWaveConfig(minLevel = 0.35f, maxLevel = 1.00f, durationMs = 470, phaseOffsetMs = 140),
-    BarWaveConfig(minLevel = 0.28f, maxLevel = 0.95f, durationMs = 340, phaseOffsetMs = 70),
-    BarWaveConfig(minLevel = 0.18f, maxLevel = 0.82f, durationMs = 430, phaseOffsetMs = 210),
+    IdleConfig(minLevel = 0.14f, maxLevel = 0.26f, durationMs = 2600, phaseOffsetMs = 300),
+    IdleConfig(minLevel = 0.22f, maxLevel = 0.42f, durationMs = 2200, phaseOffsetMs = 0),
+    IdleConfig(minLevel = 0.22f, maxLevel = 0.42f, durationMs = 2200, phaseOffsetMs = 150),
+    IdleConfig(minLevel = 0.14f, maxLevel = 0.26f, durationMs = 2600, phaseOffsetMs = 450),
 )
 
 @Composable
@@ -106,8 +103,8 @@ fun AudioReactiveBars(
     spacing: Dp = 1.6.dp,
     startPadding: Dp = 0.dp,
 ) {
+
     var rawAccentColor by remember { mutableStateOf<Color?>(null) }
-    var lastAudioCaptureMs by remember { mutableStateOf(0L) }
 
     LaunchedEffect(artworkDrawable) {
         rawAccentColor = null
@@ -148,69 +145,66 @@ fun AudioReactiveBars(
 
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
+    var lastCaptureUptimeMs by remember { mutableStateOf(0L) }
+    var reactiveActive by remember { mutableStateOf(false) }
+
     DisposableEffect(isPlaying) {
         if (!isPlaying) {
             PausedRestLevels.forEachIndexed { i, v -> rawLevels[i] = v }
             onDispose {}
         } else {
             var visualizer: Visualizer? = null
-            val listener =
-                object : Visualizer.OnDataCaptureListener {
-                    override fun onWaveFormDataCapture(
-                        visualizer: Visualizer?,
-                        waveform: ByteArray?,
-                        samplingRate: Int,
-                    ) {
-                        val safe = waveform ?: return
-                        if (safe.isEmpty()) return
+            val listener = object : Visualizer.OnDataCaptureListener {
+                override fun onWaveFormDataCapture(
+                    visualizer: Visualizer?,
+                    waveform: ByteArray?,
+                    samplingRate: Int,
+                ) {
+                    val safe = waveform ?: return
+                    if (safe.isEmpty()) return
 
-                        lastAudioCaptureMs = android.os.SystemClock.elapsedRealtime()
+                    val half = safe.size / 2
+                    val windowSize = half / (BAR_COUNT / 2)
+                    val leftBands = FloatArray(BAR_COUNT / 2) { idx ->
+                        val s = idx * windowSize
+                        val e = if (idx == BAR_COUNT / 2 - 1) half else s + windowSize
+                        safe.windowEnergy(s, e)
+                    }
+                    val mirrored = floatArrayOf(
+                        leftBands[0],
+                        leftBands[1],
+                        leftBands[1],
+                        leftBands[0],
+                    )
 
-                        val half = safe.size / 2
-                        val windowSize = half / (BAR_COUNT / 2)
-                        val leftBands =
-                            FloatArray(BAR_COUNT / 2) { idx ->
-                                val s = idx * windowSize
-                                val e = if (idx == BAR_COUNT / 2 - 1) half else s + windowSize
-                                safe.windowEnergy(s, e)
-                            }
-                        val mirrored =
-                            floatArrayOf(
-                                leftBands[0],
-                                leftBands[1],
-                                leftBands[1],
-                                leftBands[0],
-                            )
-
-                        mainHandler.post {
-                            for (i in mirrored.indices) {
-                                rawLevels[i] =
-                                    (rawLevels[i] * 0.55f + mirrored[i] * 0.45f)
-                                        .coerceIn(0.08f, 1f)
-                            }
+                    mainHandler.post {
+                        lastCaptureUptimeMs = SystemClock.uptimeMillis()
+                        for (i in mirrored.indices) {
+                            rawLevels[i] = (rawLevels[i] * 0.55f + mirrored[i] * 0.45f)
+                                .coerceIn(0.08f, 1f)
                         }
                     }
-
-                    override fun onFftDataCapture(
-                        visualizer: Visualizer?,
-                        fft: ByteArray?,
-                        samplingRate: Int,
-                    ) = Unit
                 }
 
+                override fun onFftDataCapture(
+                    visualizer: Visualizer?,
+                    fft: ByteArray?,
+                    samplingRate: Int,
+                ) = Unit
+            }
+
             runCatching {
-                visualizer =
-                    Visualizer(0).apply {
-                        val captureSizes = Visualizer.getCaptureSizeRange()
-                        captureSize = captureSizes[1].coerceAtMost(256)
-                        setDataCaptureListener(
-                            listener,
-                            Visualizer.getMaxCaptureRate() / 2,
-                            /* waveform = */ true,
-                            /* fft = */ false,
-                        )
-                        enabled = true
-                    }
+                visualizer = Visualizer(0).apply {
+                    val captureSizes = Visualizer.getCaptureSizeRange()
+                    captureSize = captureSizes[1].coerceAtMost(256)
+                    setDataCaptureListener(
+                        listener,
+                        Visualizer.getMaxCaptureRate() / 2,
+                        /* waveform = */ true,
+                        /* fft = */ false,
+                    )
+                    enabled = true
+                }
             }.onFailure {
                 PausedRestLevels.forEachIndexed { i, v -> rawLevels[i] = v }
             }
@@ -241,53 +235,50 @@ fun AudioReactiveBars(
     val idleFloats = Array(BAR_COUNT) { index ->
         val cfg = IdleConfigs[index]
         val start = if (index % 2 == 0) cfg.minLevel else cfg.maxLevel
-        val end = if (index % 2 == 0) cfg.maxLevel else cfg.minLevel
+        val end   = if (index % 2 == 0) cfg.maxLevel else cfg.minLevel
         idleTransition.animateFloat(
             initialValue = start,
             targetValue = end,
-            animationSpec =
-                InfiniteRepeatableSpec(
-                    animation =
-                        tween(
-                            durationMillis = cfg.durationMs,
-                            delayMillis = cfg.phaseOffsetMs,
-                            easing = FastOutSlowInEasing,
-                        ),
-                    repeatMode = RepeatMode.Reverse,
+            animationSpec = InfiniteRepeatableSpec(
+                animation = tween(
+                    durationMillis = cfg.durationMs,
+                    delayMillis = cfg.phaseOffsetMs,
+                    easing = FastOutSlowInEasing,
                 ),
+                repeatMode = RepeatMode.Reverse,
+            ),
             label = "idle_$index",
         )
     }
 
-    val playingTransition = rememberInfiniteTransition(label = "visualizer_playing")
-    val playingFloats = Array(BAR_COUNT) { index ->
-        val cfg = PlayingConfigs[index]
-        val start = if (index % 2 == 0) cfg.minLevel else cfg.maxLevel
-        val end = if (index % 2 == 0) cfg.maxLevel else cfg.minLevel
-        playingTransition.animateFloat(
-            initialValue = start,
-            targetValue = end,
-            animationSpec =
-                InfiniteRepeatableSpec(
-                    animation =
-                        tween(
-                            durationMillis = cfg.durationMs,
-                            delayMillis = cfg.phaseOffsetMs,
-                            easing = FastOutSlowInEasing,
-                        ),
-                    repeatMode = RepeatMode.Reverse,
-                ),
-            label = "playing_$index",
-        )
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) return@LaunchedEffect
+        while (true) {
+            for (i in 0 until BAR_COUNT) {
+                rawLevels[i] = idleFloats[i].value
+            }
+            kotlinx.coroutines.delay(32L)
+        }
+    }
+
+    LaunchedEffect(isPlaying) {
+        if (!isPlaying) {
+            reactiveActive = false
+            return@LaunchedEffect
+        }
+        while (true) {
+            reactiveActive =
+                (SystemClock.uptimeMillis() - lastCaptureUptimeMs) < STALE_SIGNAL_TIMEOUT_MS
+            kotlinx.coroutines.delay(120L)
+        }
     }
 
     val totalWidth = barWidth * BAR_COUNT + spacing * (BAR_COUNT - 1)
 
     Canvas(
-        modifier =
-            modifier
-                .padding(start = startPadding)
-                .size(width = totalWidth, height = maxBarHeight),
+        modifier = modifier
+            .padding(start = startPadding)
+            .size(width = totalWidth, height = maxBarHeight),
     ) {
         val barPx = barWidth.toPx()
         val spacingPx = spacing.toPx()
@@ -297,17 +288,10 @@ fun AudioReactiveBars(
         for (index in 0 until BAR_COUNT) {
             val springLevel = animatedLevels[index].value
             val idleLevel = idleFloats[index].value
-            val playingLevel = playingFloats[index].value
-
-            val hasActiveHardwareCapture =
-                isPlaying && (android.os.SystemClock.elapsedRealtime() - lastAudioCaptureMs < 1200L)
 
             val level =
-                when {
-                    !isPlaying -> idleLevel
-                    hasActiveHardwareCapture -> springLevel
-                    else -> playingLevel
-                }.coerceIn(0.08f, 1f)
+                (if (isPlaying && reactiveActive) springLevel else idleLevel)
+                    .coerceIn(0.08f, 1f)
 
             val barH = maxH * level
             val left = index * (barPx + spacingPx)
@@ -316,16 +300,14 @@ fun AudioReactiveBars(
             val peakAlpha = (0.65f + level * 0.35f).coerceIn(0.65f, 1.00f)
             val rootAlpha = (0.22f + level * 0.18f).coerceIn(0.22f, 0.40f)
 
-            val brush =
-                Brush.verticalGradient(
-                    colorStops =
-                        arrayOf(
-                            0f to accentColor.copy(alpha = peakAlpha * accentColor.alpha),
-                            1f to color.copy(alpha = rootAlpha * color.alpha),
-                        ),
-                    startY = top,
-                    endY = maxH,
-                )
+            val brush = Brush.verticalGradient(
+                colorStops = arrayOf(
+                    0f to accentColor.copy(alpha = peakAlpha * accentColor.alpha),
+                    1f to color.copy(alpha = rootAlpha * color.alpha),
+                ),
+                startY = top,
+                endY = maxH,
+            )
 
             drawRoundRect(
                 brush = brush,

@@ -19,7 +19,7 @@ package com.android.systemui.statusbar.quickactions.stopwatch.shared.model
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.statusbar.quickactions.popups.shared.model.PopupActionModel
 
-/** Popup content for stopwatch status inside the dynamic island. */
+/** Popup content for stopwatch notifications surfaced inside the dynamic island. */
 data class StopwatchPopupModel(
     val icon: Icon?,
     val title: String,
@@ -29,4 +29,6 @@ data class StopwatchPopupModel(
     val elapsedTimeText: String?,
     val onOpen: (() -> Unit)?,
     val actions: List<PopupActionModel> = emptyList(),
+    val sourcePackageName: String? = null,
+    val sourceUserId: Int? = null,
 )

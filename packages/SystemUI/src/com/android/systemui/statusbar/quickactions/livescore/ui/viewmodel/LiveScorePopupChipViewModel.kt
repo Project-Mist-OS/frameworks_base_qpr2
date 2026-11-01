@@ -22,22 +22,24 @@ import com.android.systemui.ActivityIntentHelper
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.lifecycle.HydratedActivatable
+import com.android.systemui.lifecycle.ExclusiveActivatable
+import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.statusbar.NotificationLockscreenUserManager
+import com.android.systemui.statusbar.quickactions.livescore.shared.model.LiveScoreChipModel
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.LIVE_SCORES
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled
+import com.android.systemui.statusbar.quickactions.popups.shared.toActivityLaunchAction
+import com.android.systemui.statusbar.quickactions.shared.model.ChipIcon
+import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
+import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
+import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
+import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
+import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
 import com.android.systemui.statusbar.notification.domain.interactor.ActiveNotificationsInteractor
 import com.android.systemui.statusbar.notification.shared.ActiveNotificationModel
 import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.statusbar.quickactions.livescore.shared.model.LiveScoreChipModel
-import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings
-import com.android.systemui.statusbar.quickactions.popups.shared.toActivityLaunchAction
-import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
-import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
-import com.android.systemui.statusbar.quickactions.shared.model.ChipIcon
-import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
-import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
-import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
-import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.combine
@@ -52,52 +54,51 @@ constructor(
     private val activityIntentHelper: ActivityIntentHelper,
     private val lockscreenUserManager: NotificationLockscreenUserManager,
     private val keyguardStateController: KeyguardStateController,
-) : StatusBarPopupChipViewModel, HydratedActivatable() {
+) : StatusBarPopupChipViewModel, ExclusiveActivatable() {
+    private val hydrator = Hydrator("LiveScorePopupChipViewModel.hydrator")
 
     override val chip: QuickActionChipModel by
-        combine(
-            activeNotificationsInteractor.promotedOngoingNotifications,
-            activeNotificationsInteractor.allRepresentativeNotifications,
-            DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled(
-                context,
-                DynamicIslandFeatureSettings.LIVE_SCORES,
-            ),
-        ) { promotedNotifications, allNotifications, liveScoresEnabled ->
-            if (!liveScoresEnabled) {
-                return@combine QuickActionChipModel.Hidden(QuickActionChipId.LiveScore)
-            }
-            val orderedNotifications =
-                promotedNotifications.mapNotNull { notif -> allNotifications[notif.key] }
-            val candidate =
-                orderedNotifications.firstOrNull { it.isLiveScoreCandidate() }
-                    ?: allNotifications.values.firstOrNull { it.isLiveScoreCandidate() }
-            toPopupChipModel(
-                candidate?.toLiveScoreModel(
-                    context = context,
-                    activityStarter = activityStarter,
-                    activityIntentHelper = activityIntentHelper,
-                    lockscreenUserManager = lockscreenUserManager,
-                    keyguardStateController = keyguardStateController,
-                )
-            )
-        }
-        .hydratedStateOf(
+        hydrator.hydratedStateOf(
             traceName = "chip",
             initialValue = QuickActionChipModel.Hidden(QuickActionChipId.LiveScore),
+            source =
+                combine(
+                    activeNotificationsInteractor.promotedOngoingNotifications,
+                    activeNotificationsInteractor.allRepresentativeNotifications,
+                ) { promotedNotifications, allNotifications ->
+                    val orderedNotifications =
+                        promotedNotifications.mapNotNull { notif -> allNotifications[notif.key] }
+                    val candidate =
+                        orderedNotifications.firstOrNull { it.isLiveScoreCandidate() }
+                            ?: allNotifications.values.firstOrNull { it.isLiveScoreCandidate() }
+                    toPopupChipModel(
+                        candidate?.toLiveScoreModel(
+                            context = context,
+                            activityStarter = activityStarter,
+                            activityIntentHelper = activityIntentHelper,
+                            lockscreenUserManager = lockscreenUserManager,
+                            keyguardStateController = keyguardStateController,
+                        )
+                    )
+                }
+                .combine(observeDynamicIslandFeatureEnabled(context, LIVE_SCORES)) { model, enabled ->
+                    if (enabled) model else QuickActionChipModel.Hidden(QuickActionChipId.LiveScore)
+                },
         )
+
+    override suspend fun onActivated(): Nothing {
+        hydrator.activate()
+    }
 
     private fun toPopupChipModel(model: LiveScoreChipModel?): QuickActionChipModel {
         if (model == null) {
             return QuickActionChipModel.Hidden(QuickActionChipId.LiveScore)
         }
 
-        val contentDescription =
-            ContentDescription.Loaded(
-                listOfNotNull(model.title, model.score, model.subtitle).joinToString(" ")
-            )
-
         return QuickActionChipModel.PopupChip(
             chipId = QuickActionChipId.LiveScore,
+            sourcePackageName = model.sourcePackageName,
+            sourceUserId = model.sourceUserId,
             icons =
                 listOfNotNull(
                     model.icon?.let {
@@ -109,7 +110,10 @@ constructor(
                 ),
             chipContent = ChipContent.Text(buildCollapsedText(model)),
             colors = ChipColors.DynamicIsland,
-            contentDescription = contentDescription,
+            contentDescription =
+                ContentDescription.Loaded(
+                    listOfNotNull(model.title, model.score, model.subtitle).joinToString(" ")
+                ),
             popupContent = PopupContentModel.LiveScore(model),
         )
     }
@@ -147,6 +151,8 @@ private fun ActiveNotificationModel.toLiveScoreModel(
     val content = checkNotNull(promotedContent).privateVersion
     val contentDescription = ContentDescription.Loaded(appName)
     return LiveScoreChipModel(
+        sourcePackageName = packageName,
+        sourceUserId = android.os.UserHandle.getUserId(uid),
         key = key,
         icon = statusBarIcon?.loadDrawable(context)?.let { Icon.Loaded(it, contentDescription) },
         appName = appName,

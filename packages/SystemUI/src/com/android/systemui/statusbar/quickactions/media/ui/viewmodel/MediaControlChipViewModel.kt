@@ -19,49 +19,63 @@ package com.android.systemui.statusbar.quickactions.media.ui.viewmodel
 import androidx.compose.runtime.getValue
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
+import com.android.systemui.lifecycle.ExclusiveActivatable
+import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.media.controls.shared.MediaSeekBarStyle
-import com.android.systemui.lifecycle.HydratedActivatable
+import com.android.systemui.media.dialog.MediaOutputDialogManager
 import com.android.systemui.statusbar.quickactions.media.domain.interactor.MediaControlChipInteractor
 import com.android.systemui.statusbar.quickactions.media.shared.model.MediaControlChipModel
-import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
 import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
 import com.android.systemui.statusbar.quickactions.shared.model.ChipIcon
-import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
-import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
+import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import java.util.Locale
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 
 /**
  * [StatusBarPopupChipViewModel] for a media control chip in the status bar. This view model is
- * used to display a media control chip.
+ * responsible for converting the [MediaControlChipModel] to a [QuickActionChipModel] that can be used to
+ * display a media control chip.
  */
 class MediaControlChipViewModel
 @AssistedInject
 constructor(
     mediaControlChipInteractor: MediaControlChipInteractor,
-) : StatusBarPopupChipViewModel, HydratedActivatable() {
-
+    private val mediaOutputDialogManager: MediaOutputDialogManager,
+) : StatusBarPopupChipViewModel, ExclusiveActivatable() {
+    private val hydrator: Hydrator = Hydrator("MediaControlChipViewModel.hydrator")
+    /**
+     * A snapshot [State] of the current [QuickActionChipModel]. This emits a new [QuickActionChipModel]
+     * whenever the underlying [MediaControlChipModel] changes.
+     */
     override val chip: QuickActionChipModel by
-        combine(
-            mediaControlChipInteractor.mediaControlChipModel,
-            mediaControlChipInteractor.mediaSeekBarStyle,
-        ) { model, seekBarStyle ->
-            toPopupChipModel(model, seekBarStyle)
-        }
-            .hydratedStateOf(
-                traceName = "chip",
-                initialValue = QuickActionChipModel.Hidden(QuickActionChipId.MediaControl),
-            )
+        hydrator.hydratedStateOf(
+            traceName = "chip",
+            initialValue = QuickActionChipModel.Hidden(QuickActionChipId.MediaControl),
+            source =
+                combine(
+                    mediaControlChipInteractor.mediaControlChipModel,
+                    mediaControlChipInteractor.mediaSeekBarStyle,
+                    mediaControlChipInteractor.useRedesignedMedia,
+                ) { model, seekBarStyle, useRedesignedMedia ->
+                    toPopupChipModel(model, seekBarStyle, useRedesignedMedia)
+                },
+        )
 
-        private fun toPopupChipModel(
-            model: MediaControlChipModel?,
-            seekBarStyle: MediaSeekBarStyle = MediaSeekBarStyle.DEFAULT,
-        ): QuickActionChipModel {
+    override suspend fun onActivated(): Nothing {
+        hydrator.activate()
+    }
+
+    private fun toPopupChipModel(
+        model: MediaControlChipModel?,
+        seekBarStyle: MediaSeekBarStyle,
+        useRedesignedMedia: Boolean,
+    ): QuickActionChipModel {
         if (model == null || model.songName.isNullOrEmpty()) {
             return QuickActionChipModel.Hidden(QuickActionChipId.MediaControl)
         }
@@ -74,16 +88,32 @@ constructor(
                     resId = com.android.internal.R.drawable.ic_audio_media,
                     contentDescription = contentDescription,
                 )
-
-        val songTitle = normalizeSongTitle(model.songName.toString(), model.artistName?.toString())
-
         return QuickActionChipModel.PopupChip(
             chipId = QuickActionChipId.MediaControl,
-            icons = listOf(ChipIcon(icon = defaultIcon, onClick = model.openApp)),
-            chipContent = ChipContent.Text(songTitle),
+            icons = listOf(ChipIcon(icon = defaultIcon)),
+            chipContent =
+                ChipContent.Text(
+                    normalizeSongTitle(model.songName.toString(), model.artistName?.toString())
+                ),
             colors = ChipColors.DynamicIsland,
-            contentDescription = contentDescription,
-            popupContent = PopupContentModel.Media(model, seekBarStyle),
+            popupContent =
+                PopupContentModel.Media(
+                    model.copy(
+                        openOutput =
+                            model.packageName?.let { packageName ->
+                                {
+                                    mediaOutputDialogManager.createAndShow(
+                                        packageName = packageName,
+                                        aboveStatusBar = true,
+                                        userHandle =
+                                            model.sourceUserId?.let { android.os.UserHandle.of(it) },
+                                    )
+                                }
+                            }
+                    ),
+                    seekBarStyle,
+                    useRedesignedMedia,
+                ),
         )
     }
 
@@ -95,20 +125,25 @@ constructor(
     private fun normalizeSongTitle(title: String, artist: String?): String {
         if (title.isBlank()) return title
         val separatorRegex = Regex("\\s*[-–—|•]\\s*")
-        val parts = title.split(separatorRegex).map { it.trim() }.filter { it.isNotEmpty() }
-        if (parts.size >= 2) {
-            val lowerArtist = artist?.lowercase(Locale.getDefault())?.trim()
-            if (lowerArtist != null && lowerArtist.isNotEmpty()) {
-                if (parts[0].lowercase(Locale.getDefault()) == lowerArtist) {
-                    return parts.subList(1, parts.size).joinToString(" - ")
-                }
-                if (parts.last().lowercase(Locale.getDefault()) == lowerArtist) {
-                    return parts.subList(0, parts.size - 1).joinToString(" - ")
-                }
-            }
-            val parenArtistRegex = Regex("\\((?:feat|ft|with|by)[^)]*\\)", RegexOption.IGNORE_CASE)
-            return title.replace(parenArtistRegex, "").trim()
+        val parts = title.split(separatorRegex, limit = 2)
+        if (parts.size != 2) return title
+
+        val left = parts[0].trim()
+        val right = parts[1].trim()
+        if (left.isBlank() || right.isBlank()) return title
+
+        val artistKey = artist?.toComparableKey() ?: return title
+        val leftKey = left.toComparableKey()
+        val rightKey = right.toComparableKey()
+
+        return when {
+            leftKey.contains(artistKey) -> right
+            rightKey.contains(artistKey) -> left
+            else -> title
         }
-        return title
+    }
+
+    private fun String.toComparableKey(): String {
+        return lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), " ").trim()
     }
 }

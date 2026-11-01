@@ -16,39 +16,67 @@
 
 package com.android.systemui.statusbar.quickactions.ui.compose
 
-import android.util.Log
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.android.internal.util.mist.MistBarSettings
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
-import kotlinx.coroutines.delay
+import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
 import kotlin.math.abs
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
-private const val TAG = "DynamicIslandDebug"
+/**
+ * Number of concurrently active tasks at which the island starts showing an icon-only companion
+ * "peek" chip beside the main one (ported from SmartIsland's secondary bubble). Matches
+ * SmartIsland, which reveals its secondary bubble as soon as a second task exists (e.g. Media +
+ * Flashlight); the companion then stands in for the two swipe-hint dots.
+ */
+private const val COMPANION_MIN_TASKS = 2
+
 /** Phone-only centered dynamic island that pages through active popup chips. */
 @Composable
 fun StatusBarDynamicIslandContainer(
@@ -56,19 +84,109 @@ fun StatusBarDynamicIslandContainer(
     onMediaControlPopupVisibilityChanged: (Boolean) -> Unit,
     onIslandBoundsChanged: (android.graphics.Rect) -> Unit = {},
     modifier: Modifier = Modifier,
+    onIslandActiveChanged: (Boolean) -> Unit = {},
+    onIslandMotionChanged: (Boolean, Float) -> Unit = { _, _ -> },
+    mediaTransitionChip: QuickActionChipModel.PopupChip? = null,
 ) {
-    val cutoutSpec = rememberDynamicIslandCutoutSpec()
+    MistBarTheme {
+        MistBarContainer(
+            chips,
+            onMediaControlPopupVisibilityChanged,
+            onIslandBoundsChanged,
+            modifier,
+            onIslandActiveChanged,
+            onIslandMotionChanged,
+            mediaTransitionChip,
+        )
+    }
+}
+
+@Composable
+private fun MistBarContainer(
+    chips: List<QuickActionChipModel.PopupChip>,
+    onMediaControlPopupVisibilityChanged: (Boolean) -> Unit,
+    onIslandBoundsChanged: (android.graphics.Rect) -> Unit,
+    modifier: Modifier,
+    onIslandActiveChanged: (Boolean) -> Unit,
+    onIslandMotionChanged: (Boolean, Float) -> Unit,
+    mediaTransitionChip: QuickActionChipModel.PopupChip?,
+) {
+    val state = LocalMistBarState.current
+    val settings = state.settings
+    val context = LocalContext.current
+    val view = LocalView.current
+    val layoutDirection = LocalLayoutDirection.current
+    val alignment = MistBarAlignment.fromSetting(settings.alignment)
+    var hostLeft by remember { mutableFloatStateOf(0f) }
+    val currentOnIslandBoundsChanged by rememberUpdatedState(onIslandBoundsChanged)
+    val currentOnIslandActiveChanged by rememberUpdatedState(onIslandActiveChanged)
+    val currentMediaVisibilityChanged by rememberUpdatedState(onMediaControlPopupVisibilityChanged)
+    DisposableEffect(Unit) {
+        onDispose {
+            currentOnIslandBoundsChanged(android.graphics.Rect())
+            currentOnIslandActiveChanged(false)
+            currentMediaVisibilityChanged(false)
+        }
+    }
+    val displayCutout = rememberDynamicIslandCutoutSpec()
+    val (widthScale, heightScale) = rememberDynamicIslandSizeScale()
+    val camera =
+        displayCutout.cutoutBounds?.takeIf {
+            mistBarCutoutMatches(alignment, it.center.x, displayCutout.windowWidthPx.toFloat())
+        }
+    val configuredGap = settings.integer("camera_width", 25, 0, 120).dp * widthScale
+    val cutoutSpec =
+        displayCutout.copy(
+            cutoutBounds = camera,
+            embeddedGapWidth =
+                if (camera != null) maxOf(configuredGap, displayCutout.embeddedGapWidth)
+                else if (alignment == MistBarAlignment.CENTER) configuredGap else 0.dp,
+        )
     var selectedChipId by remember { mutableStateOf<QuickActionChipId?>(null) }
     var popupAnchorChip by remember { mutableStateOf<QuickActionChipModel.PopupChip?>(null) }
     var popupVisible by remember { mutableStateOf(false) }
     var knownChipIds by remember { mutableStateOf<List<QuickActionChipId>>(emptyList()) }
-    var anchorBounds by remember { mutableStateOf<Rect?>(null) }
+    var mainChipBounds by remember { mutableStateOf<Rect?>(null) }
+    var companionChipBounds by remember { mutableStateOf<Rect?>(null) }
+    var popupOriginBounds by remember { mutableStateOf<Rect?>(null) }
+    var lastDirection by remember { mutableIntStateOf(1) }
+
+    fun withIslandLaunch(chip: QuickActionChipModel.PopupChip): QuickActionChipModel.PopupChip {
+        val content = chip.popupContent as? PopupContentModel.Media ?: return chip
+        val launch = content.model.openAppFromIsland ?: return chip
+        return chip.copy(
+            popupContent =
+                content.copy(
+                    model =
+                        content.model.copy(openApp = {
+                            val bounds =
+                                if (chip.isPopupShown) popupOriginBounds
+                                else if (chip.chipId == selectedChipId || chips.size == 1) mainChipBounds
+                                else companionChipBounds
+                            val controller =
+                                mistBarLaunchController(view, bounds, settings.isReducedMotion)
+                            chip.hidePopup()
+                            launch(controller)
+                        })
+                )
+        )
+    }
+
+    LaunchedEffect(state.userId) {
+        popupAnchorChip = null
+        popupVisible = false
+        popupOriginBounds = null
+        selectedChipId = null
+        knownChipIds = emptyList()
+    }
 
     LaunchedEffect(chips) {
         val currentChipIds = chips.map { it.chipId }
         val newestChipId =
             if (knownChipIds.isEmpty()) {
-                null
+                QuickActionChipId.MediaControl.takeIf {
+                    mediaTransitionChip != null && it in currentChipIds
+                }
             } else {
                 currentChipIds.lastOrNull { it !in knownChipIds }
             }
@@ -87,15 +205,16 @@ fun StatusBarDynamicIslandContainer(
 
     LaunchedEffect(shownChip) {
         if (shownChip != null) {
-            Log.d(TAG, "DynamicIsland: shownChip = ${shownChip.chipId}")
-            selectedChipId = shownChip.chipId
+            if (popupAnchorChip == null) {
+                val fromPeek = shownChip.chipId != selectedChipId
+                popupOriginBounds =
+                    if (fromPeek && companionChipBounds != null) companionChipBounds
+                    else mainChipBounds
+            }
             popupAnchorChip = shownChip
             popupVisible = true
         } else if (popupAnchorChip != null) {
-            Log.d(TAG, "DynamicIsland: hiding popup")
             popupVisible = false
-            delay(220)
-            popupAnchorChip = null
         }
     }
 
@@ -105,15 +224,27 @@ fun StatusBarDynamicIslandContainer(
         )
     }
 
-    LaunchedEffect(selectedChip) {
-        Log.d(TAG, "DynamicIsland: selectedChip = ${selectedChip?.chipId}")
-        if (selectedChip == null) {
-            onIslandBoundsChanged(android.graphics.Rect())
+    val switchScaleAnim = remember { Animatable(1f) }
+    var switchInitialized by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedChipId) {
+        if (!switchInitialized) {
+            switchInitialized = true
+            return@LaunchedEffect
         }
+        if (settings.isReducedMotion) {
+            switchScaleAnim.snapTo(1f)
+            return@LaunchedEffect
+        }
+        switchScaleAnim.animateTo(0.92f, tween(40, easing = FastOutSlowInEasing))
+        switchScaleAnim.animateTo(
+            1f,
+            spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 650f),
+        )
     }
 
     fun selectRelative(direction: Int) {
         if (chips.size <= 1) return
+        lastDirection = if (direction >= 0) 1 else -1
         val newIndex = (selectedIndex + direction).mod(chips.size)
         val newChip = chips[newIndex]
         selectedChipId = newChip.chipId
@@ -122,99 +253,430 @@ fun StatusBarDynamicIslandContainer(
         }
     }
 
+    fun selectCard(id: String) {
+        chips
+            .firstOrNull { it.chipId == QuickActionChipId.Utility(id) }
+            ?.let {
+                selectedChipId = it.chipId
+                popupOriginBounds = mainChipBounds
+                it.showPopup()
+            }
+    }
+
+    val showCompanion = settings.isCompanionEnabled && chips.size >= COMPANION_MIN_TASKS
+    val companionOnRight =
+        when (alignment) {
+            MistBarAlignment.LEFT -> true
+            MistBarAlignment.RIGHT -> false
+            MistBarAlignment.CENTER -> lastDirection >= 0
+        }
+    val companionAtEnd = companionOnRight == (layoutDirection == LayoutDirection.Ltr)
+    val balanceCompanion = alignment == MistBarAlignment.CENTER
+    val companionChip =
+        if (showCompanion) {
+            chips.getOrNull((selectedIndex + lastDirection).mod(chips.size))
+        } else {
+            null
+        }
+    val showCompanionChip = shownChip == null && popupAnchorChip == null
+    val companionDiameter = DynamicIslandCompanionDiameter * heightScale * settings.miniScale
+    val companionBalance = companionDiameter + DynamicIslandCompanionGap
+    val effectivePageCount = if (showCompanion) 1 else chips.size
+    val screenLocation = remember { IntArray(2) }
+    val windowLocation = remember { IntArray(2) }
+    fun publishIslandBounds() {
+        view.getLocationOnScreen(screenLocation)
+        view.getLocationInWindow(windowLocation)
+        val dx = screenLocation[0] - windowLocation[0]
+        val dy = screenLocation[1] - windowLocation[1]
+        val coverage = android.graphics.Rect()
+        fun include(bounds: Rect?) {
+            if (bounds == null || bounds.isEmpty) return
+            coverage.union(
+                (bounds.left - dx).toInt(),
+                (bounds.top - dy).toInt(),
+                (bounds.right - dx).toInt(),
+                (bounds.bottom - dy).toInt(),
+            )
+        }
+        if (selectedChip != null && !selectedChip.isPopupShown) include(mainChipBounds)
+        if (companionChip != null && showCompanionChip) include(companionChipBounds)
+        currentOnIslandBoundsChanged(coverage)
+    }
+    SideEffect {
+        onIslandMotionChanged(settings.isReducedMotion, settings.animationSpeed)
+        currentOnIslandActiveChanged(
+            selectedChip != null || popupAnchorChip != null || mediaTransitionChip != null
+        )
+        publishIslandBounds()
+    }
+
     Box(
         modifier =
-            modifier
-                .padding(horizontal = 8.dp)
-                .offset(x = cutoutSpec.horizontalOffset)
-                .onGloballyPositioned { coordinates ->
-                    if (selectedChip != null) {
-                        val b = coordinates.boundsInWindow()
-                        onIslandBoundsChanged(
-                            android.graphics.Rect(
-                                b.left.toInt(),
-                                b.top.toInt(),
-                                b.right.toInt(),
-                                b.bottom.toInt(),
-                            )
-                        )
-                    } else {
-                        onIslandBoundsChanged(android.graphics.Rect())
-                    }
-                },
+            modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
+                hostLeft = coordinates.positionInWindow().x
+            },
         contentAlignment = Alignment.Center,
     ) {
-        if (selectedChip == null) return@Box
-
-        AnimatedContent(
-            targetState = selectedChip.chipId,
-            transitionSpec = {
-                if (targetState == initialState) {
-                    fadeIn(animationSpec = tween(150)) togetherWith
-                        fadeOut(animationSpec = tween(150))
-                } else {
-                    val slideDirection =
-                        if (
-                            chips.indexOfFirst { it.chipId == targetState } >
-                                chips.indexOfFirst { it.chipId == initialState }
-                        ) {
-                            1
-                        } else {
-                            -1
-                        }
-                    (slideInHorizontally(
-                        animationSpec = tween(220),
-                        initialOffsetX = { fullWidth -> slideDirection * fullWidth / 2 },
-                    ) + fadeIn(animationSpec = tween(180))) togetherWith
-                        (slideOutHorizontally(
-                            animationSpec = tween(200),
-                            targetOffsetX = { fullWidth -> -slideDirection * fullWidth / 3 },
-                        ) + fadeOut(animationSpec = tween(140)))
+        mediaTransitionChip?.let { media ->
+            val destinationCount = chips.size + if (chips.any { it.chipId == media.chipId }) 0 else 1
+            val destinationCompanion =
+                settings.isCompanionEnabled && destinationCount >= COMPANION_MIN_TASKS
+            MistBarPositionedContent(cutoutSpec, alignment, settings, hostLeft) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (destinationCompanion && (balanceCompanion || !companionAtEnd)) {
+                        Spacer(Modifier.width(companionBalance))
+                    }
+                    MistBarMediaTarget(
+                        media,
+                        cutoutSpec,
+                        if (destinationCompanion) 1 else destinationCount,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (destinationCompanion && (balanceCompanion || companionAtEnd)) {
+                        Spacer(Modifier.width(companionBalance))
+                    }
                 }
-            },
-            label = "dynamic_island_chip",
-        ) { chipId ->
-            val chip = chips.firstOrNull { it.chipId == chipId } ?: return@AnimatedContent
-            var horizontalDragPx by remember(chipId, chips.size) { mutableFloatStateOf(0f) }
-            val thresholdPx = with(LocalDensity.current) { 36.dp.toPx() }
-
-            StatusBarDynamicIslandChip(
-                viewModel = chip,
-                pageCount = chips.size,
-                cutoutSpec = cutoutSpec,
-                onChipBoundsChanged = { bounds -> anchorBounds = bounds },
-                modifier =
-                    Modifier.pointerInput(chips.size, chip.chipId) {
-                        detectHorizontalDragGestures(
-                            onDragEnd = {
-                                when {
-                                    horizontalDragPx <= -thresholdPx -> selectRelative(1)
-                                    horizontalDragPx >= thresholdPx -> selectRelative(-1)
-                                }
-                                horizontalDragPx = 0f
-                            },
-                            onDragCancel = { horizontalDragPx = 0f },
-                            onHorizontalDrag = { change, dragAmount ->
-                                horizontalDragPx += dragAmount
-                                if (chips.size > 1 && abs(horizontalDragPx) > 8f) {
-                                    change.consume()
-                                }
-                            },
-                        )
-                    },
-                onTap = {
-                    Log.d(TAG, "DynamicIsland: chip clicked: ${chip.chipId}")
-                    if (chip.isPopupShown) chip.hidePopup() else chip.showPopup()
+            }
+        }
+        popupAnchorChip?.let { anchoredChip ->
+            StatusBarPopup(
+                viewModel = withIslandLaunch(shownChip ?: anchoredChip),
+                isVisible = popupVisible,
+                chipBoundsInScreen = popupOriginBounds,
+                canPage = chips.size > 1,
+                pageDirection = lastDirection,
+                onPage = { direction -> selectRelative(direction) },
+                onHidden = {
+                    if (shownChip == null) {
+                        popupAnchorChip = null
+                        popupOriginBounds = null
+                    }
                 },
             )
         }
 
-        popupAnchorChip?.let { anchoredChip ->
-            StatusBarPopup(
-                viewModel = anchoredChip,
-                isVisible = popupVisible,
-                chipBoundsInScreen = anchorBounds,
+        if (selectedChip == null) return@Box
+
+        MistBarPositionedContent(cutoutSpec, alignment, settings, hostLeft) {
+            Row(
+                modifier =
+                    Modifier.graphicsLayer {
+                        scaleX = switchScaleAnim.value
+                        scaleY = switchScaleAnim.value
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (showCompanion && companionChip != null) {
+                    if (companionAtEnd) {
+                        if (balanceCompanion) Spacer(modifier = Modifier.width(companionBalance))
+                    } else if (!showCompanionChip) {
+                        Spacer(modifier = Modifier.size(companionDiameter))
+                        Spacer(modifier = Modifier.width(DynamicIslandCompanionGap))
+                    } else {
+                        MistBarChip(
+                            viewModel = withIslandLaunch(companionChip),
+                            popupAttached = popupAnchorChip?.chipId == companionChip.chipId,
+                            pageCount = 1,
+                            cutoutSpec = cutoutSpec,
+                            companion = true,
+                            onPage = ::selectRelative,
+                            onCard = ::selectCard,
+                            onTap = { companionChip.showPopup() },
+                            onChipBoundsChanged = {
+                                companionChipBounds = it
+                                publishIslandBounds()
+                            },
+                        )
+                        Spacer(modifier = Modifier.width(DynamicIslandCompanionGap))
+                    }
+                }
+
+                AnimatedContent(
+                    targetState = selectedChip.chipId,
+                    modifier = Modifier.weight(1f, fill = false),
+                    contentAlignment =
+                        when (alignment) {
+                            MistBarAlignment.LEFT -> AbsoluteAlignment.CenterLeft
+                            MistBarAlignment.RIGHT -> AbsoluteAlignment.CenterRight
+                            MistBarAlignment.CENTER -> Alignment.Center
+                        },
+                    transitionSpec = {
+                        if (targetState == initialState) {
+                            fadeIn(
+                                animationSpec =
+                                    tween(
+                                        if (settings.isReducedMotion) 0
+                                        else (150 / settings.animationSpeed).toInt()
+                                    )
+                            ) togetherWith
+                                fadeOut(
+                                    animationSpec =
+                                        tween(
+                                            if (settings.isReducedMotion) 0
+                                            else (150 / settings.animationSpeed).toInt()
+                                        )
+                                )
+                        } else {
+                            val slideDirection =
+                                if (
+                                    chips.indexOfFirst { it.chipId == targetState } >
+                                        chips.indexOfFirst { it.chipId == initialState }
+                                ) {
+                                    1
+                                } else {
+                                    -1
+                                }
+                            (slideInHorizontally(
+                                animationSpec =
+                                    tween(
+                                        if (settings.isReducedMotion) 0
+                                        else (220 / settings.animationSpeed).toInt()
+                                    ),
+                                initialOffsetX = { fullWidth -> slideDirection * fullWidth / 2 },
+                            ) +
+                                fadeIn(
+                                    animationSpec =
+                                        tween(
+                                            if (settings.isReducedMotion) 0
+                                            else (180 / settings.animationSpeed).toInt()
+                                        )
+                                )) togetherWith
+                                (slideOutHorizontally(
+                                    animationSpec =
+                                        tween(
+                                            if (settings.isReducedMotion) 0
+                                            else (200 / settings.animationSpeed).toInt()
+                                        ),
+                                    targetOffsetX = { fullWidth -> -slideDirection * fullWidth / 3 },
+                                ) +
+                                    fadeOut(
+                                        animationSpec =
+                                            tween(
+                                                if (settings.isReducedMotion) 0
+                                                else (140 / settings.animationSpeed).toInt()
+                                            )
+                                    ))
+                        }
+                    },
+                    label = "dynamic_island_chip",
+                ) { chipId ->
+                    val chip = chips.firstOrNull { it.chipId == chipId } ?: return@AnimatedContent
+                    val launchableChip = withIslandLaunch(chip)
+                    val currentChip by rememberUpdatedState(launchableChip)
+                    var dragAccumulator by remember(chipId, chips.size) { mutableFloatStateOf(0f) }
+                    var verticalDragAccumulator by
+                        remember(chipId, chips.size) { mutableFloatStateOf(0f) }
+                    val dragOffset = remember(chipId, chips.size) { Animatable(0f) }
+                    val thresholdPx = with(LocalDensity.current) { 36.dp.toPx() }
+                    val maxFollowPx = with(LocalDensity.current) { 40.dp.toPx() }
+                    val dragScope = rememberCoroutineScope()
+
+                    MistBarChip(
+                        viewModel = launchableChip,
+                        popupAttached = popupAnchorChip?.chipId == chip.chipId,
+                        pageCount = effectivePageCount,
+                        cutoutSpec = cutoutSpec,
+                        onChipBoundsChanged = { bounds ->
+                            if (chipId == selectedChip.chipId) {
+                                mainChipBounds = bounds
+                                publishIslandBounds()
+                            }
+                        },
+                        onPage = ::selectRelative,
+                        onCard = ::selectCard,
+                        modifier =
+                            Modifier.graphicsLayer { translationX = dragOffset.value }
+                                .pointerInput(chips.size, chip.chipId, settings) {
+                                    detectDragGestures(
+                                        onDragEnd = {
+                                            val switched =
+                                                when {
+                                                    abs(verticalDragAccumulator) >= thresholdPx &&
+                                                        abs(verticalDragAccumulator) >
+                                                            abs(dragAccumulator) -> {
+                                                        mistBarAction(
+                                                            settings.text(
+                                                                if (verticalDragAccumulator < 0)
+                                                                    "gesture_swipe_up"
+                                                                else "gesture_swipe_down",
+                                                                if (verticalDragAccumulator < 0)
+                                                                    "expand"
+                                                                else "notifications",
+                                                            ),
+                                                            context,
+                                                            currentChip,
+                                                            currentChip.showPopup,
+                                                            ::selectRelative,
+                                                            ::selectCard,
+                                                        )
+                                                        true
+                                                    }
+                                                    dragAccumulator <= -thresholdPx -> {
+                                                        mistBarAction(
+                                                            settings.text(
+                                                                "gesture_swipe_left",
+                                                                "next_card",
+                                                            ),
+                                                            context,
+                                                            currentChip,
+                                                            currentChip.showPopup,
+                                                            ::selectRelative,
+                                                            ::selectCard,
+                                                        )
+                                                        true
+                                                    }
+                                                    dragAccumulator >= thresholdPx -> {
+                                                        mistBarAction(
+                                                            settings.text(
+                                                                "gesture_swipe_right",
+                                                                "previous_card",
+                                                            ),
+                                                            context,
+                                                            currentChip,
+                                                            currentChip.showPopup,
+                                                            ::selectRelative,
+                                                            ::selectCard,
+                                                        )
+                                                        true
+                                                    }
+                                                    else -> false
+                                                }
+                                            dragAccumulator = 0f
+                                            verticalDragAccumulator = 0f
+                                            dragScope.launch {
+                                                if (switched) {
+                                                    dragOffset.snapTo(0f)
+                                                } else {
+                                                    dragOffset.animateTo(
+                                                        targetValue = 0f,
+                                                        animationSpec =
+                                                            spring(
+                                                                dampingRatio =
+                                                                    Spring.DampingRatioMediumBouncy,
+                                                                stiffness = Spring.StiffnessMedium,
+                                                            ),
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            dragAccumulator = 0f
+                                            verticalDragAccumulator = 0f
+                                            dragScope.launch {
+                                                dragOffset.animateTo(
+                                                    targetValue = 0f,
+                                                    animationSpec =
+                                                        spring(
+                                                            dampingRatio =
+                                                                Spring.DampingRatioMediumBouncy,
+                                                            stiffness = Spring.StiffnessMedium,
+                                                        ),
+                                                )
+                                            }
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            dragAccumulator += dragAmount.x
+                                            verticalDragAccumulator += dragAmount.y
+                                            val target =
+                                                (dragAccumulator * 0.5f).coerceIn(
+                                                    -maxFollowPx,
+                                                    maxFollowPx,
+                                                )
+                                            dragScope.launch { dragOffset.snapTo(target) }
+                                            if (
+                                                abs(dragAccumulator) > 8f ||
+                                                    abs(verticalDragAccumulator) > 8f
+                                            ) {
+                                                change.consume()
+                                            }
+                                        },
+                                    )
+                                },
+                        onTap = { if (chip.isPopupShown) chip.hidePopup() else chip.showPopup() },
+                    )
+                }
+
+                if (showCompanion && companionChip != null) {
+                    if (companionAtEnd) {
+                        Spacer(modifier = Modifier.width(DynamicIslandCompanionGap))
+                        if (showCompanionChip) {
+                            MistBarChip(
+                                viewModel = withIslandLaunch(companionChip),
+                                popupAttached = popupAnchorChip?.chipId == companionChip.chipId,
+                                pageCount = 1,
+                                cutoutSpec = cutoutSpec,
+                                companion = true,
+                                onPage = ::selectRelative,
+                                onCard = ::selectCard,
+                                onTap = { companionChip.showPopup() },
+                                onChipBoundsChanged = {
+                                    companionChipBounds = it
+                                    publishIslandBounds()
+                                },
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.size(companionDiameter))
+                        }
+                    } else if (balanceCompanion) {
+                        Spacer(modifier = Modifier.width(companionBalance))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MistBarPositionedContent(
+    cutoutSpec: DynamicIslandCutoutSpec,
+    alignment: MistBarAlignment,
+    settings: MistBarSettings,
+    hostLeft: Float,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content) { measurables, constraints ->
+        val windowWidth =
+            cutoutSpec.windowWidthPx.takeIf { it > 0 }?.toFloat() ?: constraints.maxWidth.toFloat()
+        val camera = cutoutSpec.cutoutBounds
+        val margin = (if (camera != null) 4.dp else 12.dp).toPx()
+        val padding = (5.dp * settings.miniScale).toPx()
+        val gap = cutoutSpec.embeddedGapWidth.toPx()
+        val offset = settings.offsetX.dp.toPx()
+        val edge =
+            mistBarChipLeft(
+                alignment,
+                windowWidth,
+                0f,
+                camera?.center?.x,
+                gap,
+                padding,
+                offset,
+                margin,
             )
+        val availableWidth =
+            when (alignment) {
+                    MistBarAlignment.LEFT -> windowWidth - margin - edge
+                    MistBarAlignment.RIGHT -> edge - margin
+                    MistBarAlignment.CENTER -> windowWidth - 2f * margin
+                }
+                .roundToInt()
+                .coerceIn(1, constraints.maxWidth.coerceAtLeast(1))
+        val placeable =
+            measurables.single().measure(constraints.copy(minWidth = 0, maxWidth = availableWidth))
+        val left =
+            mistBarChipLeft(
+                alignment,
+                windowWidth,
+                placeable.width.toFloat(),
+                camera?.center?.x,
+                gap,
+                padding,
+                offset,
+                margin,
+            )
+        layout(constraints.maxWidth, placeable.height) {
+            placeable.place((left - hostLeft).roundToInt(), settings.offsetY.dp.roundToPx())
         }
     }
 }

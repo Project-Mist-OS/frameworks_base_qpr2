@@ -55,6 +55,7 @@ import com.android.keyguard.KeyguardUpdateMonitorCallback;
 import com.android.keyguard.logging.KeyguardLogger;
 import com.android.systemui.Flags;
 import com.android.systemui.axdynamicbar.ui.AxDynamicBarChipViewModel;
+import com.android.systemui.statusbar.quickactions.popups.ui.binder.KeyguardDynamicIslandViewBinder;
 import com.android.systemui.communal.domain.interactor.CommunalSceneInteractor;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
@@ -173,6 +174,7 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
     private final KeyguardInteractor mKeyguardInteractor;
     private final TunerService mTunerService;
     private final AxDynamicBarChipViewModel mAxDynamicBarChipViewModel;
+    private final KeyguardDynamicIslandViewBinder mDynamicIslandViewBinder;
 
     @Nullable private ComposeView mBatteryComposeView;
     private ViewGroup mSystemIconsContainer;
@@ -394,7 +396,8 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
             DreamViewModel dreamViewModel,
             KeyguardInteractor keyguardInteractor,
             TunerService tunerService,
-            AxDynamicBarChipViewModel axDynamicBarChipViewModel
+            AxDynamicBarChipViewModel axDynamicBarChipViewModel,
+            KeyguardDynamicIslandViewBinder dynamicIslandViewBinder
     ) {
         super(view);
         mCoroutineDispatcher = dispatcher;
@@ -428,6 +431,7 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
         mKeyguardInteractor = keyguardInteractor;
         mTunerService = tunerService;
         mAxDynamicBarChipViewModel = axDynamicBarChipViewModel;
+        mDynamicIslandViewBinder = dynamicIslandViewBinder;
 
         mFirstBypassAttempt = mKeyguardBypassController.getBypassEnabled();
         if (!SceneContainerFlag.isEnabled()) {
@@ -471,6 +475,7 @@ public class KeyguardStatusBarViewController extends ViewController<KeyguardStat
     protected void onInit() {
         super.onInit();
         mCarrierTextController.init();
+        mDynamicIslandViewBinder.bind(mView);
     }
 
     @Override

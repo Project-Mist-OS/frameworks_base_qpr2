@@ -83,7 +83,7 @@ import com.android.systemui.statusbar.pipeline.shared.ui.model.SystemInfoCombine
 import com.android.systemui.statusbar.pipeline.shared.ui.model.VisibilityModel
 import com.android.systemui.statusbar.policy.domain.interactor.DeviceProvisioningInteractor
 import com.android.systemui.statusbar.quickactions.ime.domain.interactor.ImeIndicatorChipInteractor
-import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipsViewModel
+import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipsViewModelStore
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
 import com.android.systemui.statusbar.systemstatusicons.domain.interactor.SystemStatusIconBlocklistInteractor
 import com.android.systemui.statusbar.systemstatusicons.ui.viewmodel.SystemStatusIconsViewModel
@@ -195,6 +195,10 @@ interface HomeStatusBarViewModel : Activatable {
     /** The popup chips that should be shown on the right-hand side of the status bar. */
     val popupChips: List<QuickActionChipModel>
 
+    /** The playing media chip the Mist Bar briefly shows as a transition when media starts. */
+    val mediaTransitionChip: QuickActionChipModel.PopupChip?
+        get() = null
+
     /**
      * True if the status bar should be visible.
      *
@@ -300,7 +304,7 @@ constructor(
     private val imeIndicatorChipInteractor: ImeIndicatorChipInteractor,
     shareToAppChipViewModel: ShareToAppChipViewModel,
     @DisplayAware private val ongoingActivityChipsViewModel: OngoingActivityChipsViewModel,
-    statusBarPopupChipsViewModelFactory: StatusBarPopupChipsViewModel.Factory,
+    statusBarPopupChipsViewModelStore: StatusBarPopupChipsViewModelStore,
     @DisplayAware animations: SystemStatusEventAnimationInteractor,
     @DisplayAware statusBarContentInsetsViewModel: StatusBarContentInsetsViewModel,
     @DisplayAware bgDisplayScope: CoroutineScope,
@@ -316,7 +320,7 @@ constructor(
     val tableLogger = tableLoggerFactory.getOrCreate(tableLogBufferName(thisDisplayId), 200)
 
     private val statusBarPopupChips by lazy {
-        statusBarPopupChipsViewModelFactory.create(thisDisplayId)
+        statusBarPopupChipsViewModelStore.forDisplay(thisDisplayId)
     }
 
     override val systemStatusIconBlockListInteractor: SystemStatusIconBlocklistInteractor =
@@ -349,6 +353,9 @@ constructor(
 
     override val popupChips
         get() = statusBarPopupChips.shownQuickActionChips
+
+    override val mediaTransitionChip
+        get() = statusBarPopupChips.mediaTransitionChip
 
     override val areNotificationsLightsOut: Flow<Boolean> =
         combine(
@@ -675,7 +682,6 @@ constructor(
 
     override suspend fun onActivated() {
         coroutineScope {
-                launch { statusBarPopupChips.activate() }
             launch { uiEventLogger.hydrateUiEventLogging(chipsFlow = chipsVisibilityModel) }
             awaitCancellation()
         }

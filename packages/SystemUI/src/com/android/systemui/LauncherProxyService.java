@@ -526,6 +526,14 @@ public class LauncherProxyService implements CallbackController<LauncherProxyLis
             });
         }
 
+        @Override
+        public Rect getMistBarTarget(String packageName, int userId, int displayId, int rotation) {
+            return verifyCallerAndClearCallingIdentity("getMistBarTarget", () ->
+                    com.android.systemui.statusbar.quickactions.popups.data.repository
+                            .MistBarTransitionState.getTarget(
+                                    packageName, userId, displayId, rotation));
+        }
+
         private boolean verifyCaller(String reason) {
             final int callerId = Binder.getCallingUserHandle().getIdentifier();
             if (callerId != mCurrentBoundedUserId || mLauncherProxy == null) {

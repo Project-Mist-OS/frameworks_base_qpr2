@@ -17,30 +17,31 @@
 package com.android.systemui.statusbar.quickactions.screenrecord.ui.viewmodel
 
 import android.content.Context
-import android.util.Log
 import androidx.compose.runtime.getValue
 import com.android.systemui.common.shared.model.ContentDescription
+import com.android.systemui.common.shared.model.ContentDescription.Companion.loadContentDescription
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.lifecycle.HydratedActivatable
+import com.android.systemui.lifecycle.ExclusiveActivatable
+import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.res.R
 import com.android.systemui.screenrecord.data.model.ScreenRecordModel.Starting.Companion.toCountdownSeconds
 import com.android.systemui.statusbar.chips.screenrecord.domain.interactor.ScreenRecordChipInteractor
 import com.android.systemui.statusbar.chips.screenrecord.domain.model.ScreenRecordChipModel
-import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
-import com.android.systemui.statusbar.quickactions.screenrecord.shared.model.ScreenRecordPopupModel
-import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings
-import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
 import com.android.systemui.statusbar.quickactions.shared.model.ChipIcon
-import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipId
 import com.android.systemui.statusbar.quickactions.shared.model.QuickActionChipModel
-import com.android.systemui.statusbar.quickactions.ui.compose.ChipColors
+import com.android.systemui.statusbar.quickactions.shared.model.ChipContent
+import com.android.systemui.statusbar.quickactions.shared.model.PopupContentModel
+import com.android.systemui.statusbar.quickactions.popups.ui.viewmodel.StatusBarPopupChipViewModel
+import com.android.systemui.statusbar.quickactions.screenrecord.shared.model.ScreenRecordPopupModel
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.SCREEN_RECORDING
+import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled
 import com.android.systemui.util.kotlin.pairwise
 import com.android.systemui.util.time.SystemClock
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -52,12 +53,12 @@ constructor(
     @Application private val context: Context,
     private val interactor: ScreenRecordChipInteractor,
     private val systemClock: SystemClock,
-) : StatusBarPopupChipViewModel, HydratedActivatable() {
+) : StatusBarPopupChipViewModel, ExclusiveActivatable() {
+    private val hydrator = Hydrator("ScreenRecordPopupChipViewModel.hydrator")
 
     private val popupModel: Flow<ScreenRecordPopupModel?> =
         interactor.screenRecordState
             .map { state ->
-                Log.d(TAG, "ScreenRecord state = ${state::class.simpleName}")
                 when (state) {
                     is ScreenRecordChipModel.DoingNothing -> null
                     is ScreenRecordChipModel.Starting ->
@@ -84,29 +85,21 @@ constructor(
             }
 
     override val chip: QuickActionChipModel by
-        popupModel
-            .map { model -> toPopupChipModel(model) }
-            .combine(
-                DynamicIslandFeatureSettings.observeDynamicIslandFeatureEnabled(
-                    context,
-                    DynamicIslandFeatureSettings.SCREEN_RECORDING,
-                )
-            ) { model, enabled ->
-                Log.d(TAG, "ScreenRecord feature enabled = $enabled, chip = ${model::class.simpleName}")
-                if (enabled) model else QuickActionChipModel.Hidden(QuickActionChipId.ScreenRecord)
-            }
-            .hydratedStateOf(
-                traceName = "chip",
-                initialValue = QuickActionChipModel.Hidden(QuickActionChipId.ScreenRecord),
-            )
+        hydrator.hydratedStateOf(
+            traceName = "chip",
+            initialValue = QuickActionChipModel.Hidden(QuickActionChipId.ScreenRecord),
+            source =
+                popupModel
+                    .map { model -> toPopupChipModel(model) }
+                    .combine(
+                        observeDynamicIslandFeatureEnabled(context, SCREEN_RECORDING)
+                    ) { model, enabled ->
+                        if (enabled) model else QuickActionChipModel.Hidden(QuickActionChipId.ScreenRecord)
+                    },
+        )
 
-    override suspend fun onActivated() {
-        Log.d(TAG, "ScreenRecord ViewModel active = true")
-        try {
-            awaitCancellation()
-        } finally {
-            Log.d(TAG, "ScreenRecord ViewModel active = false")
-        }
+    override suspend fun onActivated(): Nothing {
+        hydrator.activate()
     }
 
     private fun toPopupChipModel(model: ScreenRecordPopupModel?): QuickActionChipModel {
@@ -114,17 +107,9 @@ constructor(
             return QuickActionChipModel.Hidden(QuickActionChipId.ScreenRecord)
         }
 
-        Log.d(TAG, "ScreenRecord PopupChipModel = PopupChip(model=${model::class.simpleName})")
-
         val recordingDescription =
             ContentDescription.Resource(R.string.screenrecord_ongoing_screen_only)
-
-        val chipText =
-            when (model) {
-                is ScreenRecordPopupModel.Starting -> model.secondsUntilStarted.toString()
-                is ScreenRecordPopupModel.Recording ->
-                    context.getString(R.string.dynamic_island_screen_record_short)
-            }
+                .loadContentDescription(context)
 
         return QuickActionChipModel.PopupChip(
             chipId = QuickActionChipId.ScreenRecord,
@@ -133,13 +118,20 @@ constructor(
                     ChipIcon(
                         Icon.Resource(
                             resId = R.drawable.ic_screenrecord,
-                            contentDescription = recordingDescription,
+                            contentDescription = ContentDescription.Loaded(recordingDescription),
                         )
                     )
                 ),
-            chipContent = ChipContent.Text(chipText),
+            chipContent =
+                ChipContent.Text(
+                    when (model) {
+                        is ScreenRecordPopupModel.Starting -> model.secondsUntilStarted.toString()
+                        is ScreenRecordPopupModel.Recording ->
+                            context.getString(R.string.dynamic_island_screen_record_short)
+                    }
+                ),
             colors = ChipColors.DynamicIslandAlert,
-            contentDescription = recordingDescription,
+            contentDescription = ContentDescription.Loaded(recordingDescription),
             popupContent = PopupContentModel.ScreenRecord(model),
         )
     }
@@ -147,9 +139,5 @@ constructor(
     @AssistedFactory
     interface Factory {
         fun create(): ScreenRecordPopupChipViewModel
-    }
-
-    companion object {
-        private const val TAG = "DynamicIslandDebug"
     }
 }
