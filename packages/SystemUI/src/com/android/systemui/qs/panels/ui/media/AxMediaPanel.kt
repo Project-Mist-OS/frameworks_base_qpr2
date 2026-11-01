@@ -680,14 +680,17 @@ private fun ExpandedMediaContent(
 
             Spacer(Modifier.height(8.dp))
 
-            Column(modifier = Modifier.fillMaxWidth()) {
+            // The custom seek bar styles are taller than the default one. Weighting the seek bar
+            // measures the header, text and controls first, so on a short card the seek bar gives
+            // up height instead of squeezing the media controls.
+            Column(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 MediaSeekBar(
                     session = session,
                     viewModel = viewModel,
                     colors = colors,
                     dense = true,
                     interactive = interactive,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                 )
                 if (sizing.showTimestamps) {
                     MediaTimestamps(
