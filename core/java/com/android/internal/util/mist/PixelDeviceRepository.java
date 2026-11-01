@@ -159,42 +159,134 @@ public final class PixelDeviceRepository {
                     "tangorpro"
             ));
 
-    // Codenames of 'a' series devices, newest-first. These are prioritized in
-    // device-picker sort order and used to compute a generation-relative
-    // default pick, since 'a' series Play Integrity prints have been observed
-    // to hold a working <A13 PI DEVICE verdict for meaningfully longer than
-    // flagship canary/beta prints, which per community tooling are now largely
-    // STRONG-integrity-only. This is a display/default-selection signal only;
-    // it never filters what fetchFromNetwork() returns.
-    public static final List<String> A_SERIES_ORDER = Collections.unmodifiableList(
+    // Device picker order, newest generation first (Pro XL, Pro, Fold, base, then a-series
+    // within a generation). Display order only: it never filters what fetchFromNetwork()
+    // returns, and a codename missing here is simply listed after the ranked ones.
+    public static final List<String> PICKER_ORDER = Collections.unmodifiableList(
             Arrays.asList(
-                    "formosan", // Pixel 11a
-                    "stallion", // Pixel 10a
-                    "tegu",     // Pixel 9a
-                    "akita",    // Pixel 8a
-                    "lynx",     // Pixel 7a
-                    "bluejay"   // Pixel 6a
+                    // Pixel 12 series
+                    "silverback", "sasquatch", "capuchin", "galago",
+                    // Pixel 11 series
+                    "kodiak", "grizzly", "yogi", "cubs", "formosan",
+                    // Pixel 10 series
+                    "mustang", "rango", "blazer", "frankel", "stallion",
+                    // Pixel 9 series
+                    "komodo", "caiman", "comet", "tokay", "tegu",
+                    // Tablet
+                    "tangorpro",
+                    // Pixel 8 series and Fold
+                    "husky", "felix", "shiba", "akita",
+                    // Pixel 7 series
+                    "cheetah", "panther", "lynx",
+                    // Pixel 6 series
+                    "raven", "oriole", "bluejay"
             ));
 
+    // The one device Play Integrity spoofing targets by default (and the only one
+    // Mistify marks as recommended). The Pixel 6a canary print is reported to keep
+    // RCS working, unlike the flagship canary prints. This is deliberately separate
+    // from GENERATION_ORDER, which still drives the Pixel props spoof for other apps.
+    public static final String PIF_DEFAULT_CODENAME = "bluejay";
+
+    /** DEVICE_INITIAL_SDK_INT used when a device's launch SDK isn't known. */
+    public static final String DEFAULT_INITIAL_SDK = "32";
+
     /**
-     * Returns the 'a' series codename one generation behind the newest one
-     * present in [available], or the newest available if only one exists.
-     * Returns null if no 'a' series device is present at all.
+     * SDK level a Pixel launched with, for DEVICE_INITIAL_SDK_INT and
+     * ro.product.first_api_level. Keeps the first API level consistent with the
+     * spoofed device instead of claiming the Pixel 6a's for every codename.
      */
-    public static String getPreferredASeriesCodename(List<PixelProfile> available) {
-        Set<String> present = new HashSet<>();
-        for (PixelProfile p : available) present.add(p.codename);
-        int newestIndex = -1;
-        for (int i = 0; i < A_SERIES_ORDER.size(); i++) {
-            if (present.contains(A_SERIES_ORDER.get(i))) { newestIndex = i; break; }
+    public static String getInitialSdkInt(String device) {
+        final String known = getKnownInitialSdkInt(device);
+        return known != null ? known : DEFAULT_INITIAL_SDK;
+    }
+
+    /**
+     * Launch SDK for the config's DEVICE_INITIAL_SDK_INT. A known codename always gets
+     * its table value, because a configured one can be stale for the profile it came
+     * with (a Pixel 10 Pro XL "mustang" config carrying the Pixel 6a's 32 fails the
+     * fingerprint cross-check). Only a codename missing from the table falls back to
+     * [configured], which may be null or empty if the config has none.
+     */
+    public static String resolveInitialSdkInt(String device, String configured) {
+        final String known = getKnownInitialSdkInt(device);
+        if (known != null) return known;
+        return configured == null || configured.trim().isEmpty() ? null : configured.trim();
+    }
+
+    /** Launch SDK of a codename in the table, or null for an unknown or missing one. */
+    private static String getKnownInitialSdkInt(String device) {
+        if (device == null) return null;
+        switch (device) {
+            case "oriole":
+            case "raven":
+                return "31";
+            case "bluejay":
+                return "32";
+            case "panther":
+            case "cheetah":
+            case "lynx":
+            case "felix":
+            case "tangorpro":
+                return "33";
+            case "shiba":
+            case "husky":
+            case "akita":
+            case "tokay":
+            case "caiman":
+            case "komodo":
+            case "comet":
+                return "34";
+            case "tegu":
+            case "stallion":
+                return "35";
+            case "frankel":
+            case "blazer":
+            case "mustang":
+            case "rango":
+                return "36";
+            case "cubs":
+            case "grizzly":
+            case "kodiak":
+            case "yogi":
+                return "37";
+            default:
+                return null;
         }
-        if (newestIndex < 0) return null;
-        int preferredIndex = newestIndex + 1;
-        if (preferredIndex < A_SERIES_ORDER.size()
-                && present.contains(A_SERIES_ORDER.get(preferredIndex))) {
-            return A_SERIES_ORDER.get(preferredIndex);
+    }
+
+    /**
+     * Security patch ("YYYY-MM-DD") encoded in a Pixel build ID: CP3A.260905.009 is
+     * 2026-09-05. For configs that carry no SECURITY_PATCH, so the device's own patch
+     * date doesn't show next to a spoofed fingerprint. Null if [buildId] has no
+     * well-formed YYMMDD segment.
+     */
+    public static String securityPatchFromBuildId(String buildId) {
+        if (buildId == null) return null;
+        final int firstDot = buildId.indexOf('.');
+        final int secondDot = firstDot < 0 ? -1 : buildId.indexOf('.', firstDot + 1);
+        if (firstDot < 0 || secondDot != firstDot + 7) return null;
+        final String yymmdd = buildId.substring(firstDot + 1, secondDot);
+        for (int i = 0; i < yymmdd.length(); i++) {
+            final char c = yymmdd.charAt(i);
+            if (c < '0' || c > '9') return null;
         }
-        return A_SERIES_ORDER.get(newestIndex);
+        final int month = Integer.parseInt(yymmdd.substring(2, 4));
+        final int day = Integer.parseInt(yymmdd.substring(4, 6));
+        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+        return "20" + yymmdd.substring(0, 2) + "-" + yymmdd.substring(2, 4) + "-"
+                + yymmdd.substring(4, 6);
+    }
+
+    /**
+     * Returns the codename Play Integrity spoofing should use: the Pixel 6a when it
+     * is in [available], otherwise the newest ranked phone per GENERATION_ORDER.
+     */
+    public static String getDefaultPifCodename(List<PixelProfile> available) {
+        for (PixelProfile p : available) {
+            if (PIF_DEFAULT_CODENAME.equals(p.codename)) return PIF_DEFAULT_CODENAME;
+        }
+        return getDefaultPhoneCodename(available);
     }
 
     // Shared default spoof target packages — single source of truth used by both
@@ -208,12 +300,14 @@ public final class PixelDeviceRepository {
                     "com.disney.disneyplus",
                     "com.google.android.aicore",
                     "com.google.android.apps.accessibility.magnifier",
+                    "com.google.android.apps.ai.icons",
                     "com.google.android.apps.aiwallpapers",
                     "com.google.android.apps.bard",
                     "com.google.android.apps.customization.pixel",
                     "com.google.android.apps.emojiwallpaper",
                     "com.google.android.apps.pixel.agent",
                     "com.google.android.apps.pixel.creativeassistant",
+                    "com.google.android.apps.pixel.customizationbundle",
                     "com.google.android.apps.pixel.nowplaying",
                     "com.google.android.apps.pixel.psi",
                     "com.google.android.apps.pixel.subzero",
@@ -258,14 +352,17 @@ public final class PixelDeviceRepository {
     static {
         List<PixelProfile> f = new ArrayList<>();
         f.add(new PixelProfile("kodiak",    "Pixel 11 Pro XL",   "google", "kodiak",    "kodiak",
-                "google/kodiak/kodiak:17/CD1A.260905.001.B1/16238327:user/release-keys",
-                "CD1A.260905.001.B1", "2026-09-05", 0L, null, false));
+                "google/kodiak/kodiak:17/CD1A.261005.003/16262255:user/release-keys",
+                "CD1A.261005.003", "2026-10-05", 0L, null, false));
         f.add(new PixelProfile("mustang",   "Pixel 10 Pro XL",   "google", "mustang",   "mustang",
-                "google/mustang/mustang:17/CP3A.260905.009/16091614:user/release-keys",
-                "CP3A.260905.009", "2026-09-05", 0L, null, false));
+                "google/mustang/mustang:17/CP3A.261005.005/16271449:user/release-keys",
+                "CP3A.261005.005", "2026-10-05", 0L, null, false));
         f.add(new PixelProfile("tangorpro", "Pixel Tablet",      "google", "tangorpro", "tangorpro",
-                "google/tangorpro/tangorpro:17/CP3A.260905.009/16091614:user/release-keys",
-                "CP3A.260905.009", "2026-09-05", 0L, null, false));
+                "google/tangorpro/tangorpro:17/CP3A.261005.002.A1/16269273:user/release-keys",
+                "CP3A.261005.002.A1", "2026-10-05", 0L, null, false));
+        f.add(new PixelProfile("bluejay",   "Pixel 6a",          "google", "bluejay",   "bluejay_beta",
+                "google/bluejay_beta/bluejay:CANARY/ZP11.260918.007/16484274:user/release-keys",
+                "ZP11.260918.007", "2026-10-05", 0L, null, true));
         FALLBACK_PROFILES = Collections.unmodifiableList(f);
     }
 
@@ -534,9 +631,7 @@ public final class PixelDeviceRepository {
         versions.add(knownVersions.get(0) + 1);
         versions.addAll(knownVersions);
 
-        // Step 2: find the latest QPR download-ota page (mirrors PIF's canary device fetch)
-        java.util.regex.Pattern qprPattern = java.util.regex.Pattern.compile(
-                "href=\"(/about/versions/\\d+/qpr(\\d+)/download-ota)\"");
+        // Step 2: find the latest beta download pages (mirrors PIF's canary device fetch)
         java.util.regex.Pattern rowPattern = java.util.regex.Pattern.compile(
                 "<tr id=\"([^\"]+)\">\\s*<td[^>]*>([^<]+)</td>",
                 java.util.regex.Pattern.DOTALL);
@@ -544,45 +639,53 @@ public final class PixelDeviceRepository {
         for (int version : versions) {
             try {
                 String latestHtml = readUrl(GOOGLE_URL + "/about/versions/" + version);
-                java.util.regex.Matcher qm = qprPattern.matcher(latestHtml);
 
-                String bestQprPath = null;
+                // Factory image (".../download") and OTA (".../download-ota") pages, for
+                // either a QPR or the base release. Early in a cycle only the base
+                // release has pages, and skipping it would fall back to an older version.
+                java.util.regex.Matcher pm = java.util.regex.Pattern.compile(
+                        "href=\"(/about/versions/" + version
+                        + "(?:/qpr(\\d+))?/download(-ota)?)\"").matcher(latestHtml);
                 int bestQpr = -1;
-                while (qm.find()) {
-                    int qprNum = Integer.parseInt(qm.group(2));
-                    if (qprNum > bestQpr) {
-                        bestQpr = qprNum;
-                        bestQprPath = qm.group(1);
-                    }
+                List<String[]> pages = new ArrayList<>();
+                while (pm.find()) {
+                    int qprNum = pm.group(2) == null ? 0 : Integer.parseInt(pm.group(2));
+                    pages.add(new String[] { pm.group(1), String.valueOf(qprNum) });
+                    if (qprNum > bestQpr) bestQpr = qprNum;
                 }
-                if (bestQprPath == null) continue;
+                if (pages.isEmpty()) continue;
 
-                // Step 3: extract device codenames from QPR table rows. No known-codename
-                // filter here — an unlisted device (e.g. an unconfirmed Pixel 11 tier) is
-                // still picked up the moment Flash Tool/Google publish it. Union device
-                // codenames from both the OTA and Factory Image pages for this QPR rather
-                // than picking one source and discarding the other — Google doesn't always
-                // publish a device to both pages at the same time (e.g. a newer 'a' series
-                // device can lag on one page), so relying on a single source can silently
-                // drop a device for a cycle.
-                String otaHtml = readUrl(GOOGLE_URL + bestQprPath);
-                String fiPath = bestQprPath.replace("/download-ota", "/download");
-                String fiHtml;
-                try {
-                    fiHtml = readUrl(GOOGLE_URL + fiPath);
-                } catch (Exception e) {
-                    fiHtml = ""; // FI page missing/unreachable — fall back to OTA only
-                }
-
+                // Step 3: extract device codenames from the newest release's table rows.
+                // No known-codename filter here — an unlisted device (e.g. an unconfirmed
+                // Pixel 11 tier) is still picked up the moment Flash Tool/Google publish
+                // it. Union device codenames from both the OTA and Factory Image pages
+                // rather than picking one source and discarding the other — Google
+                // doesn't always publish a device to both pages at the same time (e.g. a
+                // newer 'a' series device can lag on one page), so relying on a single
+                // source can silently drop a device for a cycle.
+                //
                 // codename -> friendly model name straight from the page table,
                 // e.g. "bluejay" -> "Pixel 6a". Preferred over DEVICE_MODEL_MAP
                 // since it's always current; the map is only a fallback for the
                 // rare case a row's name cell is empty. OTA is scanned first so
                 // its naming wins on overlap, matching prior behavior.
+                List<String> paths = new ArrayList<>();
+                for (String[] page : pages) {
+                    if (Integer.parseInt(page[1]) != bestQpr || paths.contains(page[0])) continue;
+                    if (page[0].endsWith("-ota")) paths.add(0, page[0]);
+                    else paths.add(page[0]);
+                }
+
                 Map<String, String> scrapedModelNames = new HashMap<>();
                 List<String> deviceCodenames = new ArrayList<>();
                 Set<String> seenDevices = new HashSet<>();
-                for (String sourceHtml : new String[] { otaHtml, fiHtml }) {
+                for (String path : paths) {
+                    String sourceHtml;
+                    try {
+                        sourceHtml = readUrl(GOOGLE_URL + path);
+                    } catch (Exception e) {
+                        continue; // page missing/unreachable — use whichever one is left
+                    }
                     java.util.regex.Matcher rm = rowPattern.matcher(sourceHtml);
                     while (rm.find()) {
                         String device = rm.group(1).trim();
@@ -599,11 +702,8 @@ public final class PixelDeviceRepository {
 
                 // Step 4: get Flash Tool API key (same method as PIF canary fetch)
                 String flashHtml = readUrl("https://flash.android.com");
-                java.util.regex.Matcher km = java.util.regex.Pattern.compile(
-                        "AIza[0-9A-Za-z_-]{35}")
-                        .matcher(flashHtml);
-                if (!km.find()) continue;
-                String apiKey = km.group(0);
+                String apiKey = extractFlashApiKey(flashHtml);
+                if (apiKey == null) continue;
 
                 // Step 5: for each device, hit the Flash Tool API and extract canary fingerprint
                 long now = System.currentTimeMillis();
@@ -729,6 +829,26 @@ public final class PixelDeviceRepository {
             }
         }
         return Collections.emptyList();
+    }
+
+    private static final java.util.regex.Pattern FLASH_API_KEY_PATTERN =
+            java.util.regex.Pattern.compile("AIza[0-9A-Za-z_-]{35}");
+    private static final java.util.regex.Pattern FLASH_CLIENT_CONFIG_PATTERN =
+            java.util.regex.Pattern.compile("data-client-config=\"([^\"]*)\"");
+
+    /**
+     * The Flash Tool key lives in the page's data-client-config attribute (HTML-escaped
+     * JSON). Look there first so another Google key on the page is never picked up,
+     * and only fall back to scanning the whole page.
+     */
+    private static String extractFlashApiKey(String html) {
+        java.util.regex.Matcher cm = FLASH_CLIENT_CONFIG_PATTERN.matcher(html);
+        if (cm.find()) {
+            java.util.regex.Matcher km = FLASH_API_KEY_PATTERN.matcher(cm.group(1));
+            if (km.find()) return km.group();
+        }
+        java.util.regex.Matcher km = FLASH_API_KEY_PATTERN.matcher(html);
+        return km.find() ? km.group() : null;
     }
 
     /**

@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
+import android.os.Process;
 import android.util.Log;
 
 import com.android.internal.org.bouncycastle.asn1.ASN1Boolean;
@@ -56,6 +57,7 @@ import javax.security.auth.x500.X500Principal;
 public final class CertificateGenerator {
     private static final String TAG = "CertificateGenerator";
     private static final int MAX_ATTESTATION_CHALLENGE_SIZE = 128;
+    private static final BouncyCastleProvider BC_PROVIDER = new BouncyCastleProvider();
 
     public static final ASN1ObjectIdentifier ATTESTATION_OID = 
         new ASN1ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17");
@@ -133,19 +135,26 @@ public final class CertificateGenerator {
             return null;
         }
 
+        if (keyPair == null || keyPair.getPublic() == null
+                || (params.algorithm != 3 && params.algorithm != 1)) {
+            Log.e(TAG, "Invalid key pair or unsupported requested algorithm");
+            return null;
+        }
         KeyBoxManager keyboxManager = TrickyStoreService.getInstance().getKeyBoxManager();
         String algorithm = params.algorithm == 3 ? "EC" : "RSA";
-        KeyBoxManager.KeyBox keybox = keyboxManager.getKeybox(algorithm);
-        
+        if (!algorithm.equalsIgnoreCase(keyPair.getPublic().getAlgorithm())) {
+            Log.e(TAG, "Requested algorithm differs from generated key material");
+            return null;
+        }
+        KeyBoxManager.KeyBox keybox = keyboxManager.getKeyboxForLeaf(algorithm);
+
         if (keybox == null) {
             Log.e(TAG, "No keybox found for algorithm: " + algorithm);
             return null;
         }
 
         try {
-            X509CertificateHolder issuerHolder = new X509CertificateHolder(
-                keybox.certificates.get(0).getEncoded());
-            X500Name issuer = issuerHolder.getSubject();
+            X500Name issuer = keybox.getIssuerSubject();
 
             X509Certificate leaf = buildCertificate(keyPair, keybox, params, issuer, securityLevel, uid);
 
@@ -195,17 +204,22 @@ public final class CertificateGenerator {
         }
         builder.addExtension(buildAttestExtension(params, securityLevel, uid));
 
-        String sigAlg = params.algorithm == 3 ? "SHA256withECDSA" : "SHA256withRSA";
+        // Sign for the keybox's key, which is not the leaf's when the keybox only has the
+        // other algorithm (see KeyBoxManager.getKeyboxForLeaf()).
+        boolean ecIssuer = "EC".equals(keybox.algorithm);
+        String sigAlg = ecIssuer ? "SHA256withECDSA" : "SHA256withRSA";
         JcaContentSignerBuilder signerBuilder = new JcaContentSignerBuilder(sigAlg);
-        if (params.algorithm == 3) {
-            signerBuilder.setProvider(new BouncyCastleProvider());
+        if (ecIssuer) {
+            signerBuilder.setProvider(BC_PROVIDER);
         }
         ContentSigner signer = signerBuilder.build(keybox.keyPair.getPrivate());
 
         X509CertificateHolder holder = builder.build(signer);
         CertificateFactory certFactory = CertificateFactory.getInstance("X.509");
-        return (X509Certificate) certFactory.generateCertificate(
+        X509Certificate result = (X509Certificate) certFactory.generateCertificate(
             new ByteArrayInputStream(holder.getEncoded()));
+        result.verify(((X509Certificate) keybox.certificates.get(0)).getPublicKey());
+        return result;
     }
 
     private static Extension buildAttestExtension(KeyGenParameters params, int securityLevel, int uid) {
@@ -227,6 +241,9 @@ public final class CertificateGenerator {
                 new DEROctetString(bootHash)
             };
             DERSequence rootOfTrust = new DERSequence(rootOfTrustElements);
+
+            // Fetch the patch configuration once, not three times during one leaf.
+            final int[] patchLevels = AttestationUtils.getPatchLevels(params.packages);
 
             // AuthorizationList entries must be emitted in ascending tag order,
             // exactly as KeyMint does, so collect them in a TreeMap first.
@@ -257,7 +274,7 @@ public final class CertificateGenerator {
             tee.put(702, new ASN1Integer(0));
             tee.put(704, rootOfTrust);
             tee.put(705, new ASN1Integer(AttestationUtils.getOsVersion()));
-            tee.put(706, new ASN1Integer(AttestationUtils.getPatchLevel(false, params.packages)));
+            tee.put(706, new ASN1Integer(patchLevels[0]));
             if (params.brand != null) {
                 tee.put(710, new DEROctetString(params.brand));
             }
@@ -273,19 +290,26 @@ public final class CertificateGenerator {
             if (params.model != null) {
                 tee.put(717, new DEROctetString(params.model));
             }
-            tee.put(718, new ASN1Integer(AttestationUtils.getVendorPatchLevel(true, params.packages)));
-            tee.put(719, new ASN1Integer(AttestationUtils.getBootPatchLevel(true, params.packages)));
+            tee.put(718, new ASN1Integer(patchLevels[1]));
+            tee.put(719, new ASN1Integer(patchLevels[2]));
 
+            final int attestVersion = AttestationUtils.getAttestVersion();
             java.util.TreeMap<Integer, ASN1Encodable> sw = new java.util.TreeMap<>();
             sw.put(701, new ASN1Integer(System.currentTimeMillis()));
+            if (attestVersion >= 400) {
+                byte[] moduleHash = AttestationUtils.getModuleHash();
+                if (moduleHash != null) {
+                    sw.put(724, new DEROctetString(moduleHash));
+                }
+            }
             try {
-                sw.put(709, createApplicationId(uid));
+                sw.put(709, createApplicationId(uid, params.packages));
             } catch (Throwable e) {
                 Log.w(TAG, "Failed to create application ID", e);
             }
 
             ASN1Encodable[] keyDescriptionElements = new ASN1Encodable[] {
-                new ASN1Integer(AttestationUtils.getAttestVersion()),
+                new ASN1Integer(attestVersion),
                 new ASN1Enumerated(securityLevel),
                 new ASN1Integer(AttestationUtils.getKeymasterVersion()),
                 new ASN1Enumerated(securityLevel),
@@ -340,10 +364,15 @@ public final class CertificateGenerator {
         return bits;
     }
 
-    private static DEROctetString createApplicationId(int uid) throws Throwable {
+    private static DEROctetString createApplicationId(int uid, String[] knownPackages)
+            throws Throwable {
         Context context = ActivityThread.currentApplication();
+        if (context == null && ActivityThread.currentActivityThread() != null) {
+            // Framework callbacks can execute before an Application exists.
+            context = ActivityThread.currentActivityThread().getSystemContext();
+        }
         if (context == null) {
-            throw new IllegalStateException("createApplicationId: context not available from ActivityThread!");
+            throw new IllegalStateException("createApplicationId: no application or system context");
         }
 
         PackageManager pm = context.getPackageManager();
@@ -351,7 +380,10 @@ public final class CertificateGenerator {
             throw new IllegalStateException("createApplicationId: PackageManager not found!");
         }
 
-        String[] packages = pm.getPackagesForUid(uid);
+        String[] packages = uid == Process.myUid() ? knownPackages : null;
+        if (packages == null || packages.length == 0) {
+            packages = pm.getPackagesForUid(uid);
+        }
         if (packages == null || packages.length == 0) {
             throw new IllegalStateException("No packages found for UID: " + uid);
         }
