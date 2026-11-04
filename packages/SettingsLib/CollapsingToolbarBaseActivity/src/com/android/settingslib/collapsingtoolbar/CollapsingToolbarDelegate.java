@@ -22,6 +22,7 @@ import android.animation.TimeInterpolator;
 import android.app.ActionBar;
 import android.app.Activity;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.Typeface;
@@ -36,6 +37,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.TextView;
 import android.widget.Toolbar;
 
@@ -63,13 +65,16 @@ import java.util.List;
  * doesn't want/need to extend from {@link CollapsingToolbarBaseActivity} or from
  * {@link CollapsingToolbarBaseFragment}.
  *
- * <p>When running on SDK 36+ with the Expressive theme, this delegate replaces the standard
- * Material CollapsingToolbarLayout animation with a Samsung One UI-style animation:
+ * <p>When running on SDK 36+ with the Expressive theme, this delegate adds Samsung One UI-style
+ * behavior on top of the Material CollapsingToolbarLayout:
  * <ul>
- *   <li>A large bold title anchored at the bottom-start of the expanded header.</li>
- *   <li>A smooth cross-fade to a compact toolbar title (no scale/slide jitter).</li>
- *   <li>One UI cubic-Bezier easing applied to all alpha transitions.</li>
- *   <li>Linear elevation interpolation (0 dp → 4 dp) as the header collapses.</li>
+ *   <li>A large title centered in the extended header, cross-fading (Material "fade" title mode)
+ *       to a compact start-aligned toolbar title.</li>
+ *   <li>The back button (bottom-start) and toolbar buttons (primary / secondary / action,
+ *       bottom-end) start low in the extended header and glide up into the pinned toolbar row
+ *       using the One UI ease-out curve (see {@code updateToolbarButtonsGlide()}). Toolbar menu
+ *       items stay pinned in the toolbar row.</li>
+ *   <li>App bar elevation applied once the header starts collapsing.</li>
  * </ul>
  */
 public class CollapsingToolbarDelegate {
@@ -133,7 +138,6 @@ public class CollapsingToolbarDelegate {
     private class OneUiOffsetListener implements AppBarLayout.OnOffsetChangedListener {
         private final float mMaxElevationPx;
         private final float mParallaxPx;
-        private final OneUiInterpolator mInterpolator = new OneUiInterpolator();
 
         OneUiOffsetListener(@NonNull Context context) {
             float density = context.getResources().getDisplayMetrics().density;
@@ -143,13 +147,7 @@ public class CollapsingToolbarDelegate {
 
         @Override
         public void onOffsetChanged(AppBarLayout appBarLayout, int verticalOffset) {
-            final int totalScrollRange = appBarLayout.getTotalScrollRange();
-            if (totalScrollRange == 0) {
-                return;
-            }
-
-            final float collapseRatio =
-                    Math.abs(verticalOffset) / (float) totalScrollRange;
+            mLastVerticalOffset = verticalOffset;
 
             if (verticalOffset < 0) {
                 appBarLayout.setElevation(mMaxElevationPx);
@@ -157,14 +155,141 @@ public class CollapsingToolbarDelegate {
                 appBarLayout.setElevation(0f);
             }
 
-            if (mToolbarButtonsContainer != null) {
-                if (mToolbarButtonsContainer.getHeight() == 0) return;
-                
-                float maxTranslationY = totalScrollRange * 0.5f;
-                
-                mToolbarButtonsContainer.setTranslationY(maxTranslationY * (1f - collapseRatio));
+            updateToolbarButtonsGlide();
+        }
+    }
+
+    /**
+     * One UI style "glide up" of the toolbar buttons (primary / secondary / action).
+     *
+     * <p>Expanded: the back button sits low at the bottom-start of the extended header and the
+     * buttons at its bottom-end (within easy reach, clear of the centered title). Collapsed: they
+     * rest in the pinned toolbar row. In between they all glide up together along the One UI
+     * ease-out curve, tracking the header as it scrolls away.
+     *
+     * <p>The container is a pinned child ({@code layout_collapseMode="pin"}), so within the
+     * scroll range its layout position is {@code base - verticalOffset}; the translation below is
+     * therefore measured from the toolbar-row position and is 0 when fully collapsed.
+     */
+    private void updateToolbarButtonsGlide() {
+        final View container = mToolbarButtonsContainer;
+        final View back = mBackButton;
+        final AppBarLayout appBarLayout = mAppBarLayout;
+        final CollapsingToolbarLayout collapsingToolbar = mCollapsingToolbarLayout;
+        // Only the Expressive (One UI style) header uses the glide; other layouts keep the
+        // buttons in the toolbar row.
+        if (mOneUiOffsetListener == null || appBarLayout == null || collapsingToolbar == null) {
+            return;
+        }
+
+        // Back button and buttons container share the same top and height (actionBarSize), so
+        // either one can be the reference. The back button is always visible; the container is
+        // GONE when no button is enabled.
+        View reference = null;
+        if (back != null && back.getVisibility() == View.VISIBLE && back.getHeight() > 0) {
+            reference = back;
+        } else if (container != null && container.getVisibility() == View.VISIBLE
+                && container.getHeight() > 0) {
+            reference = container;
+        }
+
+        final int totalScrollRange = appBarLayout.getTotalScrollRange();
+        float translationY = 0f;
+        if (reference != null && totalScrollRange > 0 && collapsingToolbar.getHeight() > 0) {
+            final float collapseRatio = Math.max(0f, Math.min(1f,
+                    Math.abs(mLastVerticalOffset) / (float) totalScrollRange));
+            // Bottom when resting in the toolbar row (undo the pin counter-offset).
+            final float restingBottom = reference.getBottom() + mLastVerticalOffset;
+            final float expandedBottom =
+                    collapsingToolbar.getHeight() - mExpandedButtonsBottomMarginPx;
+            final float maxTranslationY = Math.max(0f, expandedBottom - restingBottom);
+            translationY = maxTranslationY
+                    * (1f - mButtonsInterpolator.getInterpolation(collapseRatio));
+        }
+
+        if (back != null) {
+            back.setTranslationY(translationY);
+        }
+        if (container != null) {
+            container.setTranslationY(translationY);
+        }
+    }
+
+    /**
+     * Replaces the Toolbar's navigation icon with {@link #mBackButton}, a sibling view in the
+     * collapsing header that glides with the other toolbar buttons.
+     *
+     * <p>The Toolbar's own navigation view is kept (the ActionBar still owns its click handling:
+     * up navigation, back stack, etc.) but made invisible and non-touchable; our back button
+     * forwards its click to it. The Toolbar is pinned and only {@code actionBarSize} tall, so the
+     * navigation view itself can't move through the header without losing touches.
+     */
+    private void initGlidingBackButton(@NonNull ViewGroup toolbarView) {
+        final CollapsingToolbarLayout collapsingToolbar = mCollapsingToolbarLayout;
+        if (!mIsExpressiveTheme || collapsingToolbar == null) {
+            return;
+        }
+
+        if (mBackButton == null || mBackButton.getParent() != collapsingToolbar) {
+            if (mBackButton != null && mButtonsLayoutListener != null) {
+                mBackButton.removeOnLayoutChangeListener(mButtonsLayoutListener);
+            }
+            mBackButton = (ImageButton) LayoutInflater.from(collapsingToolbar.getContext())
+                    .inflate(R.layout.settingslib_expressive_toolbar_back_button,
+                            collapsingToolbar, false);
+            collapsingToolbar.addView(mBackButton);
+            if (mButtonsLayoutListener == null) {
+                mButtonsLayoutListener =
+                        (v, l, t, r, b, ol, ot, or, ob) -> updateToolbarButtonsGlide();
+            }
+            mBackButton.addOnLayoutChangeListener(mButtonsLayoutListener);
+        }
+
+        mBackButton.setOnClickListener(v -> {
+            final View navigationButton = findNavigationButton(toolbarView);
+            if (navigationButton != null) {
+                navigationButton.performClick();
+                return;
+            }
+            // Fallback so the button is never dead if the Toolbar has no navigation view.
+            Context context = v.getContext();
+            while (context instanceof ContextWrapper && !(context instanceof Activity)) {
+                context = ((ContextWrapper) context).getBaseContext();
+            }
+            if (context instanceof Activity) {
+                ((Activity) context).onBackPressed();
+            }
+        });
+        hideToolbarNavigationButton(toolbarView);
+        // The navigation view may be created after the ActionBar is attached; retry once laid out.
+        toolbarView.post(() -> hideToolbarNavigationButton(toolbarView));
+    }
+
+    private void hideToolbarNavigationButton(@NonNull ViewGroup toolbarView) {
+        final View navigationButton = findNavigationButton(toolbarView);
+        if (navigationButton == null) {
+            return;
+        }
+        if (mBackButton != null && navigationButton.getContentDescription() != null) {
+            mBackButton.setContentDescription(navigationButton.getContentDescription());
+        }
+        navigationButton.setAlpha(0f);
+        navigationButton.setClickable(false);
+        navigationButton.setLongClickable(false);
+        navigationButton.setFocusable(false);
+        navigationButton.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+    }
+
+    /** The Toolbar's navigation (home-as-up) view is its first direct ImageButton child. */
+    @Nullable
+    private static View findNavigationButton(@NonNull ViewGroup toolbarView) {
+        for (int i = 0; i < toolbarView.getChildCount(); i++) {
+            final View child = toolbarView.getChildAt(i);
+            if (child instanceof ImageButton) {
+                return child;
             }
         }
+        return null;
     }
 
     private static final float TOOLBAR_LINE_SPACING_MULTIPLIER = 1.1f;
@@ -200,6 +325,14 @@ public class CollapsingToolbarDelegate {
 
     @Nullable
     private OneUiOffsetListener mOneUiOffsetListener;
+
+    private final OneUiInterpolator mButtonsInterpolator = new OneUiInterpolator();
+    private int mLastVerticalOffset;
+    private float mExpandedButtonsBottomMarginPx;
+    @Nullable
+    private View.OnLayoutChangeListener mButtonsLayoutListener;
+    @Nullable
+    private ImageButton mBackButton;
 
     public CollapsingToolbarDelegate(@NonNull HostCallback hostCallback) {
         this(hostCallback, /* useCollapsingToolbar= */ true);
@@ -279,6 +412,9 @@ public class CollapsingToolbarDelegate {
                 if (useCollapsingToolbar && mIsExpressiveTheme) {
                     actionBar.setHomeAsUpIndicator(R.drawable.settingslib_expressive_icon_back);
                 }
+            }
+            if (useCollapsingToolbar && mIsExpressiveTheme) {
+                initGlidingBackButton(mToolbar);
             }
         }
 
@@ -369,7 +505,30 @@ public class CollapsingToolbarDelegate {
 
     /** Initialize toolbar buttons container. */
     public void initToolbarButtonsContainer(View toolbarButtonsContainer) {
+        if (mToolbarButtonsContainer != null && mButtonsLayoutListener != null) {
+            mToolbarButtonsContainer.removeOnLayoutChangeListener(mButtonsLayoutListener);
+        }
         mToolbarButtonsContainer = toolbarButtonsContainer;
+        if (toolbarButtonsContainer == null) {
+            return;
+        }
+        mExpandedButtonsBottomMarginPx = getExpandedButtonsBottomMarginPx(
+                toolbarButtonsContainer.getContext());
+        // The container is GONE until a button is enabled and is laid out after the last offset
+        // callback, so re-apply the glide whenever it is (re)laid out.
+        if (mButtonsLayoutListener == null) {
+            mButtonsLayoutListener = (v, l, t, r, b, ol, ot, or, ob) -> updateToolbarButtonsGlide();
+        }
+        toolbarButtonsContainer.addOnLayoutChangeListener(mButtonsLayoutListener);
+    }
+
+    private float getExpandedButtonsBottomMarginPx(@NonNull Context context) {
+        try {
+            return context.getResources()
+                    .getDimension(R.dimen.settingslib_oneui_toolbar_buttons_expanded_margin_bottom);
+        } catch (android.content.res.Resources.NotFoundException e) {
+            return 16f * context.getResources().getDisplayMetrics().density;
+        }
     }
 
     /** Initialize toolbar's primary button. */
@@ -534,6 +693,7 @@ public class CollapsingToolbarDelegate {
             if (buttonsContainer != null) {
                 initToolbarButtonsContainer(buttonsContainer);
             }
+            initGlidingBackButton(supportToolbar);
         }
     }
 
@@ -558,6 +718,7 @@ public class CollapsingToolbarDelegate {
             if (buttonsContainer != null) {
                 initToolbarButtonsContainer(buttonsContainer);
             }
+            initGlidingBackButton(supportToolbar);
         }
     }
 
@@ -811,5 +972,6 @@ public class CollapsingToolbarDelegate {
 
         int visibility = enabled ? View.VISIBLE : View.GONE;
         mToolbarButtonsContainer.setVisibility(visibility);
+        updateToolbarButtonsGlide();
     }
 }

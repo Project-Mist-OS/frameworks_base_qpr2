@@ -21,4 +21,6 @@
     <dimen name="settingslib_oneui_collapsed_title_size">20dp</dimen>
     <dimen name="settingslib_oneui_expanded_title_margin_start">24dp</dimen>
     <dimen name="settingslib_oneui_expanded_title_margin_bottom">20dp</dimen>
+    <!-- Gap between the toolbar buttons and the bottom of the extended header when expanded. -->
+    <dimen name="settingslib_oneui_toolbar_buttons_expanded_margin_bottom">16dp</dimen>
 </resources>
