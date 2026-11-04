@@ -1,0 +1,6 @@
+# Consumer rules for SettingsLibSettingsTheme.
+# SwitchThumbIconDrawable is only referenced from a <drawable class="..."> tag in
+# res/drawable/settingslib_expressive_switch_thumb_icon.xml, which R8 does not treat as a
+# keep root, so shrinking apps (e.g. LineageParts) would otherwise drop it.
+-keep class com.android.settingslib.widget.SwitchThumbIconDrawable { *; }
+-keep class com.android.settingslib.widget.SwitchThumbIconStore { *; }

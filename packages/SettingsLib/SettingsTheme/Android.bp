@@ -18,6 +18,10 @@ android_library {
         "src/**/*.kt",
     ],
     resource_dirs: ["res"],
+    optimize: {
+        // Exported to consumers (export_proguard_flags_files defaults to true).
+        proguard_flags_files: ["proguard.flags"],
+    },
     static_libs: [
         "aconfig_settingstheme_exported_flags_java_lib",
         "androidx.preference_preference",
