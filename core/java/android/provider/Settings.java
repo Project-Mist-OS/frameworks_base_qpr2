@@ -14943,6 +14943,54 @@ public final class Settings {
         public static final String LOCK_SCREEN_CUSTOM_CLOCK_GRADIENT_RADIUS = "lock_screen_custom_clock_gradient_radius";
 
         /**
+         * clock blur (hyper os)
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_HYPER_BLUR = "lock_screen_custom_clock_hyper_blur";
+
+        /**
+         * Whether to draw a drop shadow behind the lockscreen clock
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_ENABLED = "lock_screen_custom_clock_shadow_enabled";
+
+        /**
+         * Lockscreen clock shadow color
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_COLOR = "lock_screen_custom_clock_shadow_color";
+
+        /**
+         * Lockscreen clock shadow softness (blur radius)
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_SOFTNESS = "lock_screen_custom_clock_shadow_softness";
+
+        /**
+         * Lockscreen clock shadow opacity
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_OPACITY = "lock_screen_custom_clock_shadow_opacity";
+
+        /**
+         * Lockscreen clock tilt around the horizontal axis
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_TILT_X = "lock_screen_custom_clock_tilt_x";
+
+        /**
+         * Lockscreen clock tilt around the vertical axis
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_TILT_Y = "lock_screen_custom_clock_tilt_y";
+
+        /**
+         * Lockscreen clock rotation
+         * @hide
+         */
+        public static final String LOCK_SCREEN_CUSTOM_CLOCK_ROTATION = "lock_screen_custom_clock_rotation";
+
+        /**
          * Whether to enable DOZE only when charging
          * @hide
          */

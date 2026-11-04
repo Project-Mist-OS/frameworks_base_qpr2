@@ -9,6 +9,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.Keyframe
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
+import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -63,6 +64,7 @@ class ClockStyle @JvmOverloads constructor(
 
     private val textClocks = ArrayList<TextClock>()
     private val styledTextViews = ArrayList<TextView>()
+    private val hyperClocks = ArrayList<HyperClockView>()
 
     private var clockStyle = DEFAULT_STYLE
     private var colorMode = COLOR_MODE_DEFAULT
@@ -77,6 +79,22 @@ class ClockStyle @JvmOverloads constructor(
     private var gradientColorEnd = DEFAULT_GRADIENT_COLOR_END
     private var gradientAnchorY = DEFAULT_GRADIENT_ANCHOR_Y
     private var gradientRadius = DEFAULT_GRADIENT_RADIUS
+
+    private var hyperBlurEnabled = false
+
+    private var shadowEnabled = false
+    private var shadowColor = DEFAULT_SHADOW_COLOR
+    private var shadowSoftness = DEFAULT_SHADOW_SOFTNESS
+    private var shadowOpacity = DEFAULT_SHADOW_OPACITY
+
+    private var clockTiltX = DEFAULT_TILT
+    private var clockTiltY = DEFAULT_TILT
+    private var clockRotation = DEFAULT_ROTATION
+
+    private var textGlassEnabled = false
+    private var textGlassIntensity = ClockGlass.DEFAULT_INTENSITY
+    private var textGlassLift = ClockGlass.DEFAULT_LIFT
+    private val textGlass = ClockGlassController(this)
 
     private var gradientAngleDeg = 90
 
@@ -191,6 +209,17 @@ class ClockStyle @JvmOverloads constructor(
             CLOCK_GRADIENT_COLOR_END_KEY,
             CLOCK_GRADIENT_ANCHOR_Y_KEY,
             CLOCK_GRADIENT_RADIUS_KEY,
+            CLOCK_HYPER_BLUR_KEY,
+            CLOCK_SHADOW_ENABLED_KEY,
+            CLOCK_SHADOW_COLOR_KEY,
+            CLOCK_SHADOW_SOFTNESS_KEY,
+            CLOCK_SHADOW_OPACITY_KEY,
+            CLOCK_TILT_X_KEY,
+            CLOCK_TILT_Y_KEY,
+            CLOCK_ROTATION_KEY,
+            ClockGlass.ENABLED_SETTING,
+            ClockGlass.INTENSITY_SETTING,
+            ClockGlass.LIFT_SETTING,
         )
         statusBarStateController.addCallback(statusBarStateListener)
         if (albumArtColorEnabled) {
@@ -201,6 +230,7 @@ class ClockStyle @JvmOverloads constructor(
         if (isDozing) {
             applyClockAlpha()
             applyClockColors()
+            applyClockShadow()
             startBurnInProtection()
             startAodTick()
         }
@@ -299,6 +329,57 @@ class ClockStyle @JvmOverloads constructor(
                 gradientEnabled = TunerService.parseInteger(newValue, 0) != 0
                 applyClockColors()
             }
+            CLOCK_HYPER_BLUR_KEY -> {
+                hyperBlurEnabled = TunerService.parseInteger(newValue, 0) != 0
+                applyClockColors()
+            }
+            CLOCK_SHADOW_ENABLED_KEY -> {
+                shadowEnabled = TunerService.parseInteger(newValue, 0) != 0
+                applyClockShadow()
+            }
+            CLOCK_SHADOW_COLOR_KEY -> {
+                shadowColor = TunerService.parseInteger(newValue, DEFAULT_SHADOW_COLOR)
+                applyClockShadow()
+            }
+            CLOCK_SHADOW_SOFTNESS_KEY -> {
+                shadowSoftness = TunerService.parseInteger(newValue, DEFAULT_SHADOW_SOFTNESS)
+                    .coerceIn(0, 30)
+                applyClockShadow()
+            }
+            CLOCK_SHADOW_OPACITY_KEY -> {
+                shadowOpacity = TunerService.parseInteger(newValue, DEFAULT_SHADOW_OPACITY)
+                    .coerceIn(0, 100)
+                applyClockShadow()
+            }
+            CLOCK_TILT_X_KEY -> {
+                clockTiltX = TunerService.parseInteger(newValue, DEFAULT_TILT)
+                    .coerceIn(MIN_TILT, MAX_TILT)
+                applyClockTransform()
+            }
+            CLOCK_TILT_Y_KEY -> {
+                clockTiltY = TunerService.parseInteger(newValue, DEFAULT_TILT)
+                    .coerceIn(MIN_TILT, MAX_TILT)
+                applyClockTransform()
+            }
+            CLOCK_ROTATION_KEY -> {
+                clockRotation = TunerService.parseInteger(newValue, DEFAULT_ROTATION)
+                    .coerceIn(MIN_ROTATION, MAX_ROTATION)
+                applyClockTransform()
+            }
+            ClockGlass.ENABLED_SETTING -> {
+                textGlassEnabled = TunerService.parseInteger(newValue, 0) != 0
+                applyClockColors()
+            }
+            ClockGlass.INTENSITY_SETTING -> {
+                textGlassIntensity = TunerService.parseInteger(newValue, ClockGlass.DEFAULT_INTENSITY)
+                    .coerceIn(0, 100)
+                applyClockColors()
+            }
+            ClockGlass.LIFT_SETTING -> {
+                textGlassLift = TunerService.parseInteger(newValue, ClockGlass.DEFAULT_LIFT)
+                    .coerceIn(0, 100)
+                applyClockColors()
+            }
             CLOCK_GRADIENT_COLOR_START_KEY -> {
                 gradientColorStart = TunerService.parseInteger(newValue, DEFAULT_GRADIENT_COLOR_START)
                 if (gradientEnabled) applyClockColors()
@@ -325,6 +406,7 @@ class ClockStyle @JvmOverloads constructor(
         animateAodTransition(dozing)
         applyClockAlpha()
         applyClockColors()
+        applyClockShadow()
         if (dozing) {
             startBurnInProtection()
             startAodTick()
@@ -409,6 +491,9 @@ class ClockStyle @JvmOverloads constructor(
         for (i in textClocks.indices) {
             textClocks[i].refreshTime()
         }
+        for (i in hyperClocks.indices) {
+            hyperClocks[i].refreshTime()
+        }
         lastUpdateTimeMillis = System.currentTimeMillis()
     }
 
@@ -416,8 +501,10 @@ class ClockStyle @JvmOverloads constructor(
         removePendingLayoutListener()
         currentClockView?.let { (it.parent as? ViewGroup)?.removeView(it) }
         currentClockView = null
+        textGlass.clear()
         textClocks.clear()
         styledTextViews.clear()
+        hyperClocks.clear()
         naturalClockHeight = 0
         clockContainer?.minimumHeight = 0
 
@@ -463,6 +550,10 @@ class ClockStyle @JvmOverloads constructor(
 
     private fun cacheClockViews(root: View) {
         when (root) {
+            is HyperClockView -> {
+                root.setTag(R.id.original_alpha, root.alpha)
+                hyperClocks.add(root)
+            }
             is TextClock -> {
                 root.setTag(R.id.original_typeface, root.typeface)
                 root.setTag(R.id.original_text_color, root.currentTextColor)
@@ -501,7 +592,19 @@ class ClockStyle @JvmOverloads constructor(
         if (currentClockView == null) return
         applyClockAlpha()
         applyClockColors()
+        applyClockShadow()
         applyClockScaleAfterLayout(currentClockView!!)
+    }
+
+    private fun applyClockShadow() {
+        val view = currentClockView ?: return
+        view.setRenderEffect(
+            if (shadowEnabled && !isDozing) {
+                ClockEffects.shadow(
+                    shadowColor, shadowOpacity, shadowSoftness, resources.displayMetrics.density
+                )
+            } else null
+        )
     }
 
     private fun applyClockAlpha() {
@@ -599,9 +702,22 @@ class ClockStyle @JvmOverloads constructor(
     }
 
     private fun applyClockColors() {
-        if (isNoColorClock(clockStyle) || textClocks.isEmpty()) return
+        textGlass.beginUpdate()
+        textGlass.userId = ActivityManager.getCurrentUser()
+        try {
+            applyClockColorsToViews()
+        } finally {
+            textGlass.commit()
+        }
+    }
+
+    private fun applyClockColorsToViews() {
+        if (isNoColorClock(clockStyle)) return
+        applyHyperClockColors()
+        if (textClocks.isEmpty()) return
         val whiteColor = context.getColor(android.R.color.white)
-        val useGradient = gradientEnabled && !isDozing
+        val useGlass = textGlassEnabled && !isDozing && clockStyle !in HYPER_STYLES
+        val useGradient = gradientEnabled && !isDozing && !useGlass
         for (i in textClocks.indices) {
             val tc = textClocks[i]
             (tc.getTag(R.id.original_typeface) as? Typeface)?.let { tc.typeface = it }
@@ -611,6 +727,11 @@ class ClockStyle @JvmOverloads constructor(
                 isDozing -> {
                     clearGradientFromView(tc)
                     tc.setTextColor(whiteColor)
+                }
+                useGlass -> {
+                    clearGradientFromView(tc)
+                    tc.setTextColor(if (isWhiteOriginal) resolveClockColor() else originalColor)
+                    textGlass.add(tc, textGlassIntensity, textGlassLift)
                 }
                 !isWhiteOriginal -> {
                     clearGradientFromView(tc)
@@ -637,6 +758,11 @@ class ClockStyle @JvmOverloads constructor(
                     clearGradientFromView(tv)
                     tv.setTextColor(whiteColor)
                 }
+                useGlass -> {
+                    clearGradientFromView(tv)
+                    tv.setTextColor(if (isWhiteOriginal) resolveClockColor() else originalColor)
+                    textGlass.add(tv, textGlassIntensity, textGlassLift)
+                }
                 !isWhiteOriginal -> {
                     clearGradientFromView(tv)
                     tv.setTextColor(originalColor)
@@ -653,6 +779,53 @@ class ClockStyle @JvmOverloads constructor(
         }
     }
 
+    private fun applyHyperClockColors() {
+        if (hyperClocks.isEmpty()) return
+        val whiteColor = context.getColor(android.R.color.white)
+        val useGradient = gradientEnabled && !isDozing
+        val clockColor = resolveClockColor()
+        val colorPicked = (clockColor and 0x00FFFFFF) != (whiteColor and 0x00FFFFFF)
+        val container = currentClockView
+        for (i in hyperClocks.indices) {
+            val hv = hyperClocks[i]
+            when {
+                isDozing -> {
+                    hv.setBlurEnabled(false)
+                    hv.setGradientShader(null)
+                    hv.setColonFollowsDigits(false)
+                    hv.setDigitColor(whiteColor)
+                    hv.setColonColor(whiteColor)
+                }
+                useGradient -> {
+                    hv.setBlurEnabled(false)
+                    hv.restoreColonColor()
+                    hv.setColonFollowsDigits(true)
+                    hv.setDigitColor(whiteColor)
+                    if (container != null && hv.width > 0 && hv.height > 0 &&
+                        container.width > 0 && container.height > 0
+                    ) {
+                        val (offsetX, offsetY) = getOffsetWithinAncestor(hv, container)
+                        hv.setGradientShader(
+                            buildGradientShader(
+                                container.width,
+                                container.height,
+                                offsetX,
+                                offsetY,
+                            )
+                        )
+                    }
+                }
+                else -> {
+                    hv.setGradientShader(null)
+                    hv.restoreColonColor()
+                    hv.setColonFollowsDigits(colorPicked)
+                    hv.setDigitColor(clockColor)
+                    hv.setBlurEnabled(hyperBlurEnabled)
+                }
+            }
+        }
+    }
+
     private fun getScaleFactor(): Float =
         clockSizeScale.coerceIn(MIN_CLOCK_SIZE, MAX_CLOCK_SIZE) / 100f
 
@@ -664,6 +837,7 @@ class ClockStyle @JvmOverloads constructor(
         view.pivotX = view.width / 2f
         view.pivotY = view.height / 2f
         disableClippingOnParents(view)
+        applyClockTransform()
         if (naturalClockHeight == 0 && view.height > 0) {
             naturalClockHeight = view.height
         }
@@ -688,6 +862,27 @@ class ClockStyle @JvmOverloads constructor(
             }
             container.requestLayout()
         }
+    }
+
+    private fun applyClockTransform() {
+        val view = currentClockView ?: return
+        if (clockTiltX == 0 && clockTiltY == 0 && clockRotation == 0) {
+            view.rotationX = 0f
+            view.rotationY = 0f
+            view.rotation = 0f
+            return
+        }
+        if (view.width > 0 && view.height > 0) {
+            view.pivotX = view.width / 2f
+            view.pivotY = view.height / 2f
+            val extent = maxOf(view.width, view.height).toFloat()
+            view.cameraDistance = (extent * TILT_CAMERA_DISTANCE_FACTOR)
+                .coerceAtLeast(TILT_MIN_CAMERA_DISTANCE_DP * resources.displayMetrics.density)
+        }
+        view.rotationX = clockTiltX.toFloat()
+        view.rotationY = clockTiltY.toFloat()
+        view.rotation = clockRotation.toFloat()
+        disableClippingOnParents(view)
     }
 
     private fun applyClockScaleAfterLayout(view: View) {
@@ -847,6 +1042,11 @@ class ClockStyle @JvmOverloads constructor(
                         tv.setShadowLayer(radius, 0f, dy, currentGlowColor)
                     }
                 }
+                for (i in hyperClocks.indices) {
+                    val hv = hyperClocks[i]
+                    val origAlpha = hv.getTag(R.id.original_alpha) as? Float ?: 1f
+                    hv.alpha = flashAlpha * origAlpha
+                }
             }
             start()
         }
@@ -874,6 +1074,11 @@ class ClockStyle @JvmOverloads constructor(
                 tv.alpha = (clockOpacity / 100f) * origAlpha
                 tv.setShadowLayer(0f, 0f, 0f, 0)
             }
+        }
+        for (i in hyperClocks.indices) {
+            val hv = hyperClocks[i]
+            val origAlpha = hv.getTag(R.id.original_alpha) as? Float ?: 1f
+            hv.alpha = (clockOpacity / 100f) * origAlpha
         }
     }
 
@@ -972,9 +1177,34 @@ class ClockStyle @JvmOverloads constructor(
             R.layout.keyguard_clock_space_age,      // 90
             R.layout.keyguard_clock_polyline,       // 91
             R.layout.keyguard_clock_oppo,           // 92
+            R.layout.keyguard_clock_hyperos_art2,    // 93
+            R.layout.keyguard_clock_hyperos_art4,    // 94
+            R.layout.keyguard_clock_hyperos_duo,     // 95
+            R.layout.keyguard_clock_hyperos_tall,    // 96
+            R.layout.keyguard_clock_hyperos_tall2,   // 97
+            R.layout.keyguard_clock_hyperos_tall3,   // 98
+            R.layout.keyguard_clock_hyperos_stack,   // 99
+            R.layout.keyguard_clock_graffiti_art,    // 100
+            R.layout.keyguard_clock_graffiti_stack,  // 101
+            R.layout.keyguard_clock_graffiti_compact, // 102
         )
 
         private val NO_COLOR_CLOCKS = hashSetOf(1, 2, 25, 26)
+        private val HYPER_STYLES = 93..102
+
+        private const val DEFAULT_SHADOW_COLOR = Color.BLACK
+        private const val DEFAULT_SHADOW_SOFTNESS = 8
+        private const val DEFAULT_SHADOW_OPACITY = 35
+
+        private const val DEFAULT_TILT = 0
+        private const val MIN_TILT = -75
+        private const val MAX_TILT = 75
+        private const val TILT_CAMERA_DISTANCE_FACTOR = 4f
+        private const val TILT_MIN_CAMERA_DISTANCE_DP = 1280f
+
+        private const val DEFAULT_ROTATION = 0
+        private const val MIN_ROTATION = -180
+        private const val MAX_ROTATION = 180
         private val NO_HORIZONTAL_MARGIN_CLOCKS = hashSetOf(45, 73, 74)
 
         @JvmField val CLOCK_STYLE_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_STYLE
@@ -983,6 +1213,14 @@ class ClockStyle @JvmOverloads constructor(
         @JvmField val CLOCK_TEXT_OPACITY_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_OPACITY
         @JvmField val CLOCK_FRAME_MARGIN_TOP_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_MARGIN_TOP
         @JvmField val CLOCK_SIZE_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_SIZE
+        @JvmField val CLOCK_HYPER_BLUR_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_HYPER_BLUR
+        @JvmField val CLOCK_SHADOW_ENABLED_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_ENABLED
+        @JvmField val CLOCK_SHADOW_COLOR_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_COLOR
+        @JvmField val CLOCK_SHADOW_SOFTNESS_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_SOFTNESS
+        @JvmField val CLOCK_SHADOW_OPACITY_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_SHADOW_OPACITY
+        @JvmField val CLOCK_TILT_X_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_TILT_X
+        @JvmField val CLOCK_TILT_Y_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_TILT_Y
+        @JvmField val CLOCK_ROTATION_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_ROTATION
         @JvmField val CLOCK_AOD_ANIM_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_AOD_ANIM
         @JvmField val CLOCK_ALBUM_ART_COLOR_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_ALBUM_ART_COLOR
         @JvmField val CLOCK_WOBBLE_ON_CHARGE_KEY: String = Settings.Secure.LOCK_SCREEN_CUSTOM_CLOCK_WOBBLE_ON_CHARGE
