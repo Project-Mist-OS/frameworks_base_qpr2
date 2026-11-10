@@ -527,6 +527,7 @@ public class NotificationStackScrollLayout
     private final Rect mBackgroundAnimationRect = new Rect();
     private final ArrayList<BiConsumer<Float, Float>> mExpandedHeightListeners = new ArrayList<>();
     private int mHeadsUpInset;
+    private boolean mFullWidthNotificationsInLandscape = false;
 
     /**
      * The position of the scroll boundary relative to this view. This is where the notifications
@@ -1009,6 +1010,8 @@ public class NotificationStackScrollLayout
         mHeadsUpInset = mStatusBarHeight + res.getDimensionPixelSize(
                 R.dimen.heads_up_status_bar_padding);
         mQsScrollBoundaryPosition = SystemBarUtils.getQuickQsOffsetHeight(mContext);
+        mFullWidthNotificationsInLandscape = res.getBoolean(
+                R.bool.config_fullWidthNotificationsInLandscape);
     }
 
     void updateSidePadding(int viewWidth) {
@@ -1039,7 +1042,8 @@ public class NotificationStackScrollLayout
             }
 
             if (orientation == Configuration.ORIENTATION_PORTRAIT
-                    || mShouldUseSplitNotificationShade) {
+                    || mShouldUseSplitNotificationShade
+                    || mFullWidthNotificationsInLandscape) {
                 return;
             }
 

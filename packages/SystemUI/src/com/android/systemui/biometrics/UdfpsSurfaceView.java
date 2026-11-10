@@ -41,7 +41,7 @@ public class UdfpsSurfaceView extends SurfaceView implements SurfaceHolder.Callb
     /**
      * Notifies {@link UdfpsView} when to enable GHBM illumination.
      */
-    interface GhbmIlluminationListener {
+    public interface GhbmIlluminationListener {
         /**
          * @param surface the surface for which GHBM should be enabled.
          * @param onDisplayConfigured a runnable that should be run after GHBM is enabled.
@@ -143,7 +143,7 @@ public class UdfpsSurfaceView extends SurfaceView implements SurfaceHolder.Callb
         }
         Canvas canvas = null;
         try {
-            canvas = mHolder.lockCanvas();
+            canvas = mHolder.lockHardwareCanvas();
             mUdfpsIconPressed.setBounds(
                     Math.round(sensorRect.left),
                     Math.round(sensorRect.top),

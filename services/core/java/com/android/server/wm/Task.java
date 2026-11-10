@@ -81,6 +81,7 @@ import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_PACKAGE_UP
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_RESIZE;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_STATES;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_TASKS;
+import static com.android.server.wm.ActivityRecord.shouldSkipSavingToXml;
 import static com.android.server.wm.ActivityRecord.State.PAUSED;
 import static com.android.server.wm.ActivityRecord.State.PAUSING;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
@@ -420,6 +421,12 @@ class Task extends TaskFragment {
     // trusted TaskFragments.
     @Nullable
     DecorSurfaceContainer mDecorSurfaceContainer;
+
+    // A surface that could intercept touches to avoid cross-Task passthrough. This is applied to
+    // non-organizer-created Task only and created when the first TaskFragment is added to the
+    // children of this Task.
+    @Nullable
+    TaskInputSink mTaskInputSink = null;
 
     static final int LAYER_RANK_INVISIBLE = -1;
     // Ranking (from top) of this task among all visible tasks. (-1 means it's not visible)
@@ -1648,6 +1655,11 @@ class Task extends TaskFragment {
         // passed from Task constructor.
         final TaskFragment childTaskFrag = child.asTaskFragment();
         if (childTaskFrag != null && childTaskFrag.asTask() == null) {
+            if (!mCreatedByOrganizer && mTaskInputSink == null) {
+                // The TaskInputSink is created for the Task when the first TaskFragment is added
+                // to the Task's children and the Task is not created by an organizer.
+                mTaskInputSink = new TaskInputSink(this);
+            }
             if (childTaskFrag.mTaskFragmentOrganizerProcessName != null
                     && mTaskFragmentHostProcessName == null) {
                 mTaskFragmentHostUid = childTaskFrag.mTaskFragmentOrganizerUid;
@@ -2987,6 +2999,9 @@ class Task extends TaskFragment {
         if (mDecorSurfaceContainer != null) {
             mDecorSurfaceContainer.release();
         }
+        if (mTaskInputSink != null) {
+            mTaskInputSink.releaseSurfaceControl();
+        }
 
         super.removeImmediately();
         mDisplayContent = null;
@@ -3423,6 +3438,16 @@ class Task extends TaskFragment {
         t.setVisibility(mSurfaceControl, isVisible());
     }
 
+    @Override
+    void prepareSurfaces() {
+        // Input sink surface is not a part of animation, so apply in a steady state
+        // (non-sync) with pending transaction.
+        if (mTaskInputSink != null && isVisible() && mSyncState == SYNC_STATE_NONE) {
+            mTaskInputSink.applyChangesToSurfaceIfChanged(getPendingTransaction());
+        }
+        super.prepareSurfaces();
+    }
+
     /**
      * Fills in a {@link TaskInfo} with information from this task. Note that the base intent in the
      * task info will not include any extras or clip data.
@@ -3600,6 +3625,9 @@ class Task extends TaskFragment {
             info.topActivityInfo.applicationInfo.taskAffinity = "";
             info.topActivityInfo.applicationInfo.name = "";
             info.topActivityInfo.applicationInfo.packageName = "";
+            info.pictureInPictureParams = null;
+            info.mTopActivityLocusId = null;
+            info.taskDescription = new ActivityManager.TaskDescription();
         }
 
         if (task.effectiveUid != baseActivityUid) {
@@ -4106,12 +4134,8 @@ class Task extends TaskFragment {
     }
 
     private static boolean saveActivityToXml(
-            ActivityRecord r, ActivityRecord first, TypedXmlSerializer out) {
-        if (r.info.persistableMode == ActivityInfo.PERSIST_ROOT_ONLY || !r.isPersistable()
-                || ((r.intent.getFlags() & FLAG_ACTIVITY_NEW_DOCUMENT
-                | FLAG_ACTIVITY_RETAIN_IN_RECENTS) == FLAG_ACTIVITY_NEW_DOCUMENT)
-                && r != first) {
-            // Stop at first non-persistable or first break in task (CLEAR_WHEN_TASK_RESET).
+            ActivityRecord r, ActivityRecord bottomMostActivity, TypedXmlSerializer out) {
+        if (shouldSkipSavingToXml(r, bottomMostActivity)) {
             return true;
         }
         try {

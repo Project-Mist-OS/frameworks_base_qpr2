@@ -86,4 +86,6 @@
     <!-- Whether to show the severe low battery notification that suggests turning on
          Extreme Battery Saver. -->
     <bool name="config_show_extreme_battery_saver_reminder">true</bool>
+    <!-- Whether to force notifications to take up the full width of the screen in landscape -->
+    <bool name="config_fullWidthNotificationsInLandscape">false</bool>
 </resources>

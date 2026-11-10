@@ -195,6 +195,7 @@ import android.os.Trace;
 import android.os.UEventObserver;
 import android.os.UserHandle;
 import android.os.VibrationAttributes;
+import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.pocket.IPocketCallback;
 import android.pocket.PocketManager;
@@ -1812,13 +1813,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     KEYCODE_BACK, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                     KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD);
 
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Back - Long Press");
+            performLongPressHapticFeedback(mBackLongPressAction, "Back - Long Press");
             performKeyAction(mBackLongPressAction, event);
         }
     }
 
     private void appSwitchPress() {
-        if (!keyguardOn() && mAppSwitchPressAction != Action.NOTHING) {
+        if (canPerformKeyAction(mAppSwitchPressAction)) {
             if (mAppSwitchPressAction != Action.APP_SWITCH) {
                 cancelPreloadRecentApps();
             }
@@ -1832,7 +1833,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private void appSwitchLongPress() {
-        if (!keyguardOn() && mAppSwitchLongPressAction != Action.NOTHING) {
+        if (canPerformKeyAction(mAppSwitchLongPressAction)) {
             if (mAppSwitchLongPressAction != Action.APP_SWITCH) {
                 cancelPreloadRecentApps();
             }
@@ -1842,13 +1843,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     KeyEvent.KEYCODE_APP_SWITCH, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                     KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD);
 
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Recents - Long Press");
+            performLongPressHapticFeedback(mAppSwitchLongPressAction, "Recents - Long Press");
             performKeyAction(mAppSwitchLongPressAction, event);
         }
     }
 
     private void assistPress() {
-        if (!keyguardOn() && mAssistPressAction != Action.NOTHING) {
+        if (canPerformKeyAction(mAssistPressAction)) {
             if (mAssistPressAction != Action.APP_SWITCH) {
                 cancelPreloadRecentApps();
             }
@@ -1863,7 +1864,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     }
 
     private void assistLongPress() {
-        if (!keyguardOn() && mAssistLongPressAction != Action.NOTHING) {
+        if (canPerformKeyAction(mAssistLongPressAction)) {
             if (mAssistLongPressAction != Action.APP_SWITCH) {
                 cancelPreloadRecentApps();
             }
@@ -1873,7 +1874,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     KeyEvent.KEYCODE_ASSIST, 0, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0,
                     KeyEvent.FLAG_FROM_SYSTEM, InputDevice.SOURCE_KEYBOARD);
 
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Assist - Long Press");
+            performLongPressHapticFeedback(mAssistLongPressAction, "Assist - Long Press");
             performKeyAction(mAssistLongPressAction, event,
                     AssistUtils.INVOCATION_TYPE_ASSIST_BUTTON);
         }
@@ -2368,6 +2369,23 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         mInputManager.injectInputEvent(upEvent, InputManager.INJECT_INPUT_EVENT_MODE_ASYNC);
     }
 
+    private boolean canPerformKeyAction(Action action) {
+        switch (action) {
+            case NOTHING:
+                return false;
+            case PLAY_PAUSE_MUSIC:
+            case CYCLE_RINGER_MODE:
+                return true;
+            case LAUNCH_CAMERA:
+            case SLEEP:
+            case SCREENSHOT:
+            case PARTIAL_SCREENSHOT:
+                return isScreenOn();
+            default:
+                return !keyguardOn();
+        }
+    }
+
     private void performKeyAction(Action action, KeyEvent event) {
         // By default, pass INVOCATION_TYPE_UNKNOWN to launch assistant.
         performKeyAction(action, event, AssistUtils.INVOCATION_TYPE_UNKNOWN);
@@ -2419,6 +2437,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 break;
             case PARTIAL_SCREENSHOT:
                 takeScreenshot(TAKE_SCREENSHOT_SELECTED_REGION, SCREENSHOT_KEY_OTHER);
+                if (keyguardOn()) {
+                    dismissKeyguardLw(null, null);
+                }
                 notifyKeyGestureCompleted(event, KeyGestureEvent.KEY_GESTURE_TYPE_TAKE_SCREENSHOT);
                 break;
             case TORCH:
@@ -2439,8 +2460,41 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case RINGER_MODES:
                 toggleRingerModes();
                 break;
+            case CYCLE_RINGER_MODE:
+                cycleRingerMode();
+                break;
             default:
                 break;
+        }
+    }
+
+    private void cycleRingerMode() {
+        final AudioManagerInternal audioManager = getAudioManagerInternal();
+        final int ringerMode;
+        switch (audioManager.getRingerModeInternal()) {
+            case AudioManager.RINGER_MODE_SILENT:
+                ringerMode = mVibrator.hasVibrator()
+                        ? AudioManager.RINGER_MODE_VIBRATE : AudioManager.RINGER_MODE_NORMAL;
+                break;
+            case AudioManager.RINGER_MODE_VIBRATE:
+                ringerMode = AudioManager.RINGER_MODE_NORMAL;
+                break;
+            case AudioManager.RINGER_MODE_NORMAL:
+                ringerMode = AudioManager.RINGER_MODE_SILENT;
+                break;
+            default:
+                return;
+        }
+        audioManager.setRingerModeInternal(ringerMode, TAG);
+        if (audioManager.getRingerModeInternal() != ringerMode) {
+            return;
+        }
+        if (ringerMode == AudioManager.RINGER_MODE_SILENT
+                || ringerMode == AudioManager.RINGER_MODE_VIBRATE) {
+            final int effect = ringerMode == AudioManager.RINGER_MODE_SILENT
+                    ? VibrationEffect.EFFECT_CLICK : VibrationEffect.EFFECT_DOUBLE_CLICK;
+            mVibrator.vibrate(VibrationEffect.get(effect),
+                    VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH));
         }
     }
 
@@ -2468,7 +2522,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         boolean handleHomeButton(IBinder focusedToken, KeyEvent event) {
-            final boolean keyguardOn = keyguardOn();
             final int repeatCount = event.getRepeatCount();
             final boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
             final boolean canceled = event.isCanceled();
@@ -2556,13 +2609,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                     preloadRecentApps();
                 }
             } else if (longPress) {
-                if (!keyguardOn && !mHomeConsumed &&
-                        mHomeLongPressAction != Action.NOTHING) {
+                if (!mHomeConsumed && canPerformKeyAction(mHomeLongPressAction)) {
                     if (mHomeLongPressAction != Action.APP_SWITCH) {
                         cancelPreloadRecentApps();
                     }
                     mHomePressed = true;
-                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, "Home - Long Press");
+                    performLongPressHapticFeedback(mHomeLongPressAction, "Home - Long Press");
                     // If long press home will launch assistant,
                     // it should pass this right invocation type.
                     performKeyAction(mHomeLongPressAction, event,
@@ -3407,8 +3459,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         if (mMenuLongPressAction == Action.NOTHING && (hasMenu && !hasAssist)) {
             mMenuLongPressAction = Action.SEARCH;
         }
-        mAssistPressAction = Action.SEARCH;
-        mAssistLongPressAction = Action.VOICE_SEARCH;
+        mAssistPressAction = Action.fromIntSafe(res.getInteger(
+                org.lineageos.platform.internal.R.integer.config_pressOnAssistBehavior));
+        mAssistLongPressAction = Action.fromIntSafe(res.getInteger(
+                org.lineageos.platform.internal.R.integer.config_longPressOnAssistBehavior));
         mAppSwitchPressAction = Action.APP_SWITCH;
         mAppSwitchLongPressAction = Action.fromIntSafe(res.getInteger(
                 org.lineageos.platform.internal.R.integer.config_longPressOnAppSwitchBehavior));
@@ -4062,7 +4116,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                             if (mMenuLongPressAction != Action.APP_SWITCH) {
                                 cancelPreloadRecentApps();
                             }
-                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS,
+                            performLongPressHapticFeedback(mMenuLongPressAction,
                                     "Menu - Long Press");
                             performKeyAction(mMenuLongPressAction, event);
                             mMenuPressed = false;
@@ -5684,6 +5738,7 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                         }
                     }
                 }
+                result &= ~ACTION_PASS_TO_USER;
                 break;
             }
             case KeyEvent.KEYCODE_VOICE_ASSIST: {
@@ -7432,6 +7487,12 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             }
         }
         return true;
+    }
+
+    private void performLongPressHapticFeedback(Action action, String reason) {
+        if (action != Action.CYCLE_RINGER_MODE) {
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, reason);
+        }
     }
 
     private void performHapticFeedback(int effectId, String reason) {
