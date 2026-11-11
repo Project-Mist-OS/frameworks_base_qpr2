@@ -2457,9 +2457,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             case QS_PANEL:
                 toggleQsPanel();
                 break;
-            case RINGER_MODES:
-                toggleRingerModes();
-                break;
             case CYCLE_RINGER_MODE:
                 cycleRingerMode();
                 break;
@@ -8146,26 +8143,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             } catch (RemoteException e) {
                 // do nothing.
             }
-        }
-    }
-
-    private void toggleRingerModes() {
-        AudioManager am = (AudioManager) mContext.getSystemService(Context.AUDIO_SERVICE);
-
-        switch (am.getRingerMode()) {
-            case AudioManager.RINGER_MODE_NORMAL:
-                if (mVibrator.hasVibrator()) {
-                    am.setRingerMode(AudioManager.RINGER_MODE_VIBRATE);
-                }
-                break;
-            case AudioManager.RINGER_MODE_VIBRATE:
-                am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
-                NotificationManager nm = getNotificationService();
-                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_PRIORITY);
-                break;
-            case AudioManager.RINGER_MODE_SILENT:
-                am.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
-                break;
         }
     }
 }
