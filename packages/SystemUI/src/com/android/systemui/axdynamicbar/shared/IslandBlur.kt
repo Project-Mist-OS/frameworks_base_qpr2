@@ -49,8 +49,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.toSize
-import com.android.axion.blur.AxBlurBackgroundRenderer
 import com.android.axion.blur.AxBlurSurfaceDefaults
+import com.android.axion.blur.BlurEngine
 import com.android.axion.blur.LocalAxBlurEnabled
 import kotlin.math.roundToInt
 
@@ -65,14 +65,12 @@ internal fun Modifier.islandBlur(
 ): Modifier {
     val view = LocalView.current
     val enabled = LocalAxBlurEnabled.current
-    val blur = remember(view) { AxBlurBackgroundRenderer(view) }
+    val blur = remember(view) { BlurEngine(view) }
     val radiusPx = with(LocalDensity.current) { cornerRadius.toPx() }
     val tintArgb = AxBlurSurfaceDefaults.tintColor(fallbackColor).toArgb()
 
-    DisposableEffect(blur) {
-        blur.onAttachedToWindow()
-        onDispose { blur.onDetachedFromWindow() }
-    }
+    // The engine follows the view's attach state itself; dispose drops that listener.
+    DisposableEffect(blur) { onDispose(blur::dispose) }
     SideEffect {
         blur.setEnabled(enabled)
     }
@@ -80,6 +78,7 @@ internal fun Modifier.islandBlur(
     return islandBlurFrameTracking(enabled).drawWithContent {
         var drewBlur = false
         if (enabled && size.width > 0 && size.height > 0) {
+            blur.setOverlayColor(tintArgb)
             drawIntoCanvas { canvas ->
                 drewBlur =
                     blur.draw(
@@ -89,7 +88,6 @@ internal fun Modifier.islandBlur(
                         size.width.roundToInt(),
                         size.height.roundToInt(),
                         radiusPx,
-                        tintArgb,
                     )
             }
         }

@@ -47,14 +47,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.android.axion.blur.AxBlurBackgroundRenderer
+import com.android.axion.blur.BlurEngine
 import com.android.axion.blur.LocalAxBlurEnabled
 import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.observeDynamicIslandPopupColorMode
 import com.android.systemui.statusbar.quickactions.popups.shared.DynamicIslandFeatureSettings.readDynamicIslandPopupColorMode
 import kotlin.math.roundToInt
 
 internal class PopupBlurHost(context: Context) : View(context) {
-    private val blur = AxBlurBackgroundRenderer(this)
+    // The engine follows this view's attach state itself.
+    private val blur = BlurEngine(this)
     private val bounds = RectF()
     private val fallbackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var shape: Shape? = null
@@ -87,7 +88,8 @@ internal class PopupBlurHost(context: Context) : View(context) {
         this.overlayColor = overlayColor
         fallbackPaint.color = fallbackColor
         surfaceAlpha = (alpha.coerceIn(0f, 1f) * 255).roundToInt()
-        blur.setSurfaceAlpha(surfaceAlpha)
+        blur.setAlpha(surfaceAlpha)
+        blur.setOverlayColor(overlayColor)
         blur.setEnabled(enabled && surfaceAlpha > 0)
         invalidate()
     }
@@ -101,13 +103,7 @@ internal class PopupBlurHost(context: Context) : View(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        blur.onAttachedToWindow()
         (parent as? ViewGroup)?.layoutTransition = null
-    }
-
-    override fun onDetachedFromWindow() {
-        blur.onDetachedFromWindow()
-        super.onDetachedFromWindow()
     }
 
     override fun onVisibilityAggregated(isVisible: Boolean) {
@@ -154,7 +150,7 @@ internal class PopupBlurHost(context: Context) : View(context) {
                         .asAndroidPath()
                         .also { clipPath = it }
                 }
-        if (!blur.draw(canvas, bounds, path, cornerRadiusPx, overlayColor, surfaceAlpha)) {
+        if (!blur.draw(canvas, bounds, path, cornerRadiusPx, surfaceAlpha)) {
             canvas.drawPath(path, fallbackPaint)
         }
     }

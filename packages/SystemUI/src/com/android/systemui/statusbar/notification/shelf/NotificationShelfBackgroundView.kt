@@ -28,9 +28,8 @@ import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.ViewTreeObserver
 import androidx.annotation.VisibleForTesting
-import com.android.axion.blur.AxBlurBackgroundRenderer
 import com.android.axion.blur.AxBlurColors
-import com.android.axion.blur.model.AxBackdropBlurSettingsSpec
+import com.android.axion.blur.BlurEngine
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.StatusBarIconView
 import com.android.systemui.statusbar.notification.row.NotificationBackgroundView
@@ -88,9 +87,9 @@ constructor(context: Context, attrs: AttributeSet? = null) :
         true
     }
 
-    // One blur surface per circle, so each circle blurs and fades independently.
-    private val blurRenderer =
-        AxBlurBackgroundRenderer(this, AxBackdropBlurSettingsSpec.system(), /* enabled= */ false)
+    // One blur surface per circle, so each circle blurs and fades independently. Starts disabled
+    // and follows this view's attach state itself.
+    private val blurRenderer = BlurEngine(this)
     private val motoBlurKeys = Array(MOTO_MAX_ICONS) { Any() }
     private val motoBlurBounds = Rect()
     private var motoBlurredCount = 0
@@ -99,12 +98,10 @@ constructor(context: Context, attrs: AttributeSet? = null) :
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         viewTreeObserver.addOnPreDrawListener(motoPreDrawListener)
-        blurRenderer.onAttachedToWindow()
     }
 
     override fun onDetachedFromWindow() {
         viewTreeObserver.removeOnPreDrawListener(motoPreDrawListener)
-        blurRenderer.onDetachedFromWindow()
         motoBlurredCount = 0
         super.onDetachedFromWindow()
     }
@@ -152,10 +149,11 @@ constructor(context: Context, attrs: AttributeSet? = null) :
      * @return whether all circles were blurred, or false if the flat background must be drawn
      */
     private fun drawMotoBlur(canvas: Canvas): Boolean {
-        if (!blurRenderer.isCrossWindowBlurActive()) {
+        if (!blurRenderer.isBlurActive()) {
             releaseMotoBlur()
             return false
         }
+        blurRenderer.setOverlayColor(blurOverlayColor)
         val count = motoIconBounds.size
         var drewAll = count > 0
         for (i in 0 until count) {
@@ -170,14 +168,13 @@ constructor(context: Context, attrs: AttributeSet? = null) :
                     motoBlurBounds.right,
                     motoBlurBounds.bottom,
                     bounds.width() / 2f,
-                    blurOverlayColor,
                     motoIconAlphas[i],
                 )
             drewAll = drewAll && drew
         }
         // Drawing with no alpha releases the blur surface of a circle that went away.
         for (i in count until motoBlurredCount) {
-            blurRenderer.draw(canvas, motoBlurKeys[i], 0, 0, 0, 0, 0f, blurOverlayColor, 0)
+            blurRenderer.draw(canvas, motoBlurKeys[i], 0, 0, 0, 0, 0f, 0)
         }
         motoBlurredCount = count
         return drewAll
