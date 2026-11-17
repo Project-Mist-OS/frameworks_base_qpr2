@@ -69,6 +69,7 @@ import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -269,7 +270,7 @@ private fun AxPrivacyChip(
             }
         },
         update = { it.privacyList = privacyList },
-        modifier = modifier,
+        modifier = modifier.height(dimensionResource(R.dimen.ongoing_appops_chip_height)),
     )
 }
 
