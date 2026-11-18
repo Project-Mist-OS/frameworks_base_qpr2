@@ -82,6 +82,7 @@ public class StackStateAnimator {
     private final AnimationProperties mAnimationProperties;
     public NotificationStackScrollLayout mHostLayout;
     private final HeadsUpAnimator mHeadsUpAnimator;
+    private final MistDropHeadsUpAnimator mDropAnimator;
 
     private ArrayList<NotificationStackScrollLayout.AnimationEvent> mNewEvents =
             new ArrayList<>();
@@ -108,6 +109,7 @@ public class StackStateAnimator {
             HeadsUpAnimator headsUpAnimator) {
         mHostLayout = hostLayout;
         mHeadsUpAnimator = headsUpAnimator;
+        mDropAnimator = new MistDropHeadsUpAnimator(context, hostLayout, () -> mShadeExpanded);
         initView(context);
         mAnimationProperties = new AnimationProperties() {
 
@@ -439,6 +441,9 @@ public class StackStateAnimator {
                 isHeadsUp = ((ExpandableNotificationRow) changingView).isHeadsUp();
                 key = ((ExpandableNotificationRow) changingView).getKey();
             }
+            if (shouldFinishDropAnimation(event.animationType)) {
+                mDropAnimator.finish(changingView);
+            }
             if (event.animationType ==
                     NotificationStackScrollLayout.AnimationEvent.ANIMATION_TYPE_ADD) {
 
@@ -555,6 +560,19 @@ public class StackStateAnimator {
                 }
                 changingView.performAddAnimation(0, ANIMATION_DURATION_HEADS_UP_CYCLING,
                         /* isHeadsUpAppear= */ true, /* isHeadsUpCycling= */ true, onAnimationEnd);
+            } else if (event.animationType == ANIMATION_TYPE_HEADS_UP_APPEAR
+                    && mDropAnimator.canAnimateAppear(changingView, event.headsUpFromBottom,
+                            event.headsUpHasStatusBarChip)) {
+                mHeadsUpAppearChildren.add(changingView);
+                mTmpState.copyFrom(changingView.getViewState());
+                mTmpState.applyToView(changingView);
+                Runnable onAnimationEnd = null;
+                if (loggable) {
+                    String finalKey = key;
+                    mLogger.logHUNViewAppearing(key);
+                    onAnimationEnd = () -> mLogger.appearAnimationEnded(finalKey);
+                }
+                mDropAnimator.startAppear(changingView, onAnimationEnd);
             } else if (event.animationType == ANIMATION_TYPE_HEADS_UP_APPEAR) {
                 mHeadsUpAppearChildren.add(changingView);
 
@@ -732,14 +750,29 @@ public class StackStateAnimator {
                         }
                     };
 
-                    long removeAnimationDelay = changingView.performRemoveAnimation(
-                            ANIMATION_DURATION_HEADS_UP_DISAPPEAR,
-                            0, 0.0f, true /* isHeadsUpAppear */,
-                            false /* isHeadsUpCycling */,
-                            startAnimation, postAnimation,
-                            getGlobalAnimationFinishedListener(), ExpandableView.ClipSide.BOTTOM);
+                    final boolean dropExit =
+                            event.animationType == ANIMATION_TYPE_HEADS_UP_DISAPPEAR
+                                    && mDropAnimator.canAnimateDisappear(changingView,
+                                            event.headsUpFromBottom,
+                                            event.headsUpHasStatusBarChip);
+                    long removeAnimationDelay;
+                    if (dropExit) {
+                        mDropAnimator.startDisappear(changingView, startAnimation, postAnimation,
+                                getGlobalAnimationFinishedListener());
+                        removeAnimationDelay = 0;
+                    } else {
+                        removeAnimationDelay = changingView.performRemoveAnimation(
+                                ANIMATION_DURATION_HEADS_UP_DISAPPEAR,
+                                0, 0.0f, true /* isHeadsUpAppear */,
+                                false /* isHeadsUpCycling */,
+                                startAnimation, postAnimation,
+                                getGlobalAnimationFinishedListener(),
+                                ExpandableView.ClipSide.BOTTOM);
+                    }
                     mAnimationProperties.delay += removeAnimationDelay;
-                    mAnimationProperties.duration = ANIMATION_DURATION_HEADS_UP_DISAPPEAR;
+                    mAnimationProperties.duration = dropExit
+                            ? mDropAnimator.getDisappearDuration()
+                            : ANIMATION_DURATION_HEADS_UP_DISAPPEAR;
                     mAnimationProperties.setCustomInterpolator(View.TRANSLATION_Y,
                             Interpolators.FAST_OUT_SLOW_IN_REVERSE);
                     mAnimationProperties.getAnimationFilter().animateY = true;
@@ -753,6 +786,22 @@ public class StackStateAnimator {
             mNewEvents.add(event);
         }
         return needsCustomAnimation;
+    }
+
+    private static boolean shouldFinishDropAnimation(int animationType) {
+        switch (animationType) {
+            case NotificationStackScrollLayout.AnimationEvent.ANIMATION_TYPE_REMOVE:
+            case NotificationStackScrollLayout.AnimationEvent.ANIMATION_TYPE_REMOVE_SWIPED_OUT:
+            case NotificationStackScrollLayout.AnimationEvent.ANIMATION_TYPE_GO_TO_FULL_SHADE:
+            case ANIMATION_TYPE_HEADS_UP_APPEAR:
+            case ANIMATION_TYPE_HEADS_UP_DISAPPEAR:
+            case ANIMATION_TYPE_HEADS_UP_DISAPPEAR_CLICK:
+            case ANIMATION_TYPE_HEADS_UP_CYCLING_IN:
+            case ANIMATION_TYPE_HEADS_UP_CYCLING_OUT:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private float getHeadsUpYTranslationStart(boolean headsUpFromBottom, boolean hasStatusBarChip) {
