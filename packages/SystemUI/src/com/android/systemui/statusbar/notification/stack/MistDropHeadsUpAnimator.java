@@ -344,7 +344,7 @@ final class MistDropHeadsUpAnimator {
         if (mode == ORIGIN_CUTOUT && cutout == null) {
             mode = ORIGIN_CENTER;
         }
-        float seedRadius = dp(5.5f);
+        float seedRadius = dp(7f);
         switch (mode) {
             case ORIGIN_CUTOUT: {
                 float r = Math.min(cutout.width(), cutout.height()) / 2f;
@@ -448,7 +448,7 @@ final class MistDropHeadsUpAnimator {
             }
             bgColor = Color.alpha(tint) == 0 ? Color.DKGRAY : (tint | 0xFF000000);
             rowRadius = Math.min(view.getTopCornerRadius(), rowBounds.height() / 2f);
-            dropRadius = Math.max(Math.min(origin.halfW, origin.halfH) * 1.05f, dp(5f));
+            dropRadius = Math.max(Math.min(origin.halfW, origin.halfH) * 1.05f, dp(7f));
             capsuleH = Math.min(rowBounds.height() * 0.5f, dp(24f));
             capsuleW = Math.min(rowBounds.width(),
                     Math.max(capsuleH * 2.4f, rowBounds.width() * 0.34f));
@@ -621,12 +621,21 @@ final class MistDropHeadsUpAnimator {
             float glassIn = progress(t, A_IMPACT, A_GLASS_IN_END, Interpolators.FAST_OUT_SLOW_IN);
             float glassOut = 1f - progress(t, A_GLASS_OUT_START, A_GLASS_OUT_END,
                     Interpolators.FAST_OUT_SLOW_IN);
-            d.inkAlpha = 1f - glassIn;
-            d.glassAlpha = glassIn * glassOut;
-            d.rimAlpha = glassIn * glassOut;
-            d.glowAlpha = progress(t, A_GLOW_START, A_GLOW_PEAK,
-                    Interpolators.FAST_OUT_SLOW_IN)
-                    * (1f - progress(t, A_GLOW_PEAK, A_GLOW_END, Interpolators.FAST_OUT_SLOW_IN));
+            if (mStyle == STYLE_GLOSSY) {
+                d.inkAlpha = glassOut;
+                d.shineSweep = progress(t, A_IMPACT, A_GLASS_OUT_START,
+                        Interpolators.FAST_OUT_SLOW_IN);
+            } else {
+                d.inkAlpha = 1f - glassIn;
+                d.glassAlpha = glassIn * glassOut;
+                d.rimAlpha = glassIn * glassOut;
+            }
+            if (mStyle == STYLE_CLASSIC) {
+                d.glowAlpha = progress(t, A_GLOW_START, A_GLOW_PEAK,
+                        Interpolators.FAST_OUT_SLOW_IN)
+                        * (1f - progress(t, A_GLOW_PEAK, A_GLOW_END,
+                                Interpolators.FAST_OUT_SLOW_IN));
+            }
 
             float ripple = progress(t, A_IMPACT, A_RIPPLE_END, Interpolators.LINEAR_OUT_SLOW_IN);
             if (ripple > 0f && ripple < 1f) {
@@ -688,7 +697,7 @@ final class MistDropHeadsUpAnimator {
                         blob.height() / 2f, q);
                 d.setShape(blob, radius, 0f, 0f, 0f);
                 d.fillColor = (int) mArgb.evaluate(progress(t, D_COLOR_START, D_SHRINK_END,
-                        Interpolators.FAST_OUT_SLOW_IN), bgColor, INK_COLOR);
+                        Interpolators.FAST_OUT_SLOW_IN), bgColor, d.inkColor());
                 d.fillAlpha = progress(t, 0f, D_BLOB_IN_END, Interpolators.LINEAR_OUT_SLOW_IN);
                 float rowAlpha = 1f - progress(t, D_ROW_FADE_START, D_ROW_FADE_END,
                         Interpolators.FAST_OUT_SLOW_IN);
@@ -796,6 +805,8 @@ final class MistDropHeadsUpAnimator {
         private final float mGlassBlurRadius;
         private final float mLiquidBlurRadius;
         private final float mGlossAlpha;
+        private final float mRimStrength;
+        private final int mInkColor;
         private BackgroundBlurDrawable mBlur;
         private BackgroundBlurDrawable mOriginBlur;
         private BackgroundBlurDrawable mSatBlur;
@@ -822,27 +833,37 @@ final class MistDropHeadsUpAnimator {
         float satY;
         float satRx;
         float satRy;
+        float shineSweep;
 
         DropDrawable(float density, boolean night, int style) {
             mDensity = density;
             mStyle = style;
+            boolean blur = style == STYLE_BLUR;
+            int edge = blur && !night ? Color.argb(255, 70, 72, 82) : Color.WHITE;
+            mInkColor = blur
+                    ? (night ? Color.argb(70, 255, 255, 255) : Color.argb(60, 24, 26, 34))
+                    : INK_COLOR;
             mInk.setStyle(Paint.Style.FILL);
-            if (style == STYLE_BLUR) {
-                mInk.setColor(night ? Color.argb(90, 255, 255, 255)
-                        : Color.argb(80, 24, 26, 34));
-            } else {
-                mInk.setColor(INK_COLOR);
-            }
+            mInk.setColor(mInkColor);
             mFill.setStyle(Paint.Style.FILL);
             mGlass.setStyle(Paint.Style.FILL);
-            mGlassColor = night ? Color.argb(92, 255, 255, 255) : Color.argb(190, 255, 255, 255);
-            mGlassBlurColor = night ? Color.argb(40, 255, 255, 255) : Color.argb(70, 255, 255, 255);
-            mGlassBlurRadius = 30f * density;
-            mLiquidBlurRadius = 18f * density;
-            mGlossAlpha = style == STYLE_BLUR ? 0.75f : 0.6f;
+            if (blur) {
+                mGlassColor = night ? Color.argb(34, 255, 255, 255) : Color.argb(30, 255, 255, 255);
+                mGlassBlurColor = Color.argb(12, 255, 255, 255);
+                mGlassBlurRadius = 44f * density;
+            } else {
+                mGlassColor = night ? Color.argb(92, 255, 255, 255)
+                        : Color.argb(190, 255, 255, 255);
+                mGlassBlurColor = night ? Color.argb(40, 255, 255, 255)
+                        : Color.argb(70, 255, 255, 255);
+                mGlassBlurRadius = 30f * density;
+            }
+            mLiquidBlurRadius = 22f * density;
+            mGlossAlpha = blur ? 0.8f : 0.85f;
+            mRimStrength = blur ? 0.95f : 0.7f;
             mRim.setStyle(Paint.Style.STROKE);
-            mRim.setStrokeWidth(1.6f * density);
-            mRim.setColor(Color.WHITE);
+            mRim.setStrokeWidth((blur ? 1.4f : 1.6f) * density);
+            mRim.setColor(edge);
             mGlow.setStyle(Paint.Style.FILL);
             mGlow.setColor(Color.WHITE);
             mGlow.setMaskFilter(new BlurMaskFilter(16f * density, BlurMaskFilter.Blur.NORMAL));
@@ -851,7 +872,7 @@ final class MistDropHeadsUpAnimator {
             mRipple.setColor(Color.WHITE);
             mGloss.setStyle(Paint.Style.STROKE);
             mGloss.setStrokeWidth(1.3f * density);
-            mGloss.setColor(Color.WHITE);
+            mGloss.setColor(edge);
             mShine.setStyle(Paint.Style.FILL);
             mShine.setColor(Color.WHITE);
             mShine.setMaskFilter(new BlurMaskFilter(1.5f * density, BlurMaskFilter.Blur.NORMAL));
@@ -887,7 +908,12 @@ final class MistDropHeadsUpAnimator {
             clearBlur(mSatBlur);
         }
 
+        int inkColor() {
+            return mInkColor;
+        }
+
         void reset() {
+            shineSweep = 0f;
             originScaleX = 0f;
             originScaleY = 0f;
             shape.setEmpty();
@@ -1015,6 +1041,18 @@ final class MistDropHeadsUpAnimator {
             canvas.drawOval(mTmp, mShine);
         }
 
+        private void drawSweep(Canvas canvas, RectF body, float sweep, float strength) {
+            if (sweep <= 0f || sweep >= 1f || strength <= 0.01f || body.isEmpty()) return;
+            float h = body.height();
+            float rx = Math.min(body.width() * 0.22f, h * 1.4f);
+            float ry = Math.max(h * 0.12f, 0.8f * mDensity);
+            float cx = MathUtils.lerp(body.left + rx, body.right - rx, sweep);
+            float cy = body.top + h * 0.26f;
+            mTmp.set(cx - rx, cy - ry, cx + rx, cy + ry);
+            mShine.setAlpha(alpha(0.7f * strength * (float) Math.sin(Math.PI * sweep)));
+            canvas.drawOval(mTmp, mShine);
+        }
+
         @Override
         public void draw(Canvas canvas) {
             Origin o = origin;
@@ -1044,7 +1082,7 @@ final class MistDropHeadsUpAnimator {
 
             float shapeCorner = hasShape
                     ? Math.min(radius, Math.min(shape.height(), shape.width()) / 2f) : 0f;
-            float liquidShape = blurStyle && hasShape ? inkAlpha : 0f;
+            float liquidShape = blurStyle && hasShape ? Math.max(inkAlpha, fillAlpha) : 0f;
             float shapeBlur = Math.max(mGlassBlurRadius * glassAlpha,
                     mLiquidBlurRadius * liquidShape);
             int shapeTint = Color.argb(Math.round(Color.alpha(mGlassBlurColor) * glassAlpha),
@@ -1060,23 +1098,7 @@ final class MistDropHeadsUpAnimator {
                         mLiquidBlurRadius * 0.6f, Color.TRANSPARENT, canvas);
             }
 
-            if (originVisible && (!blurStyle || originMoving)) {
-                canvas.drawRoundRect(mOriginRect, originCorner, originCorner, mInk);
-            }
-            if (neckVisible) {
-                canvas.drawPath(mNeck, mInk);
-            }
-            if (satVisible) {
-                mTmp.set(satX - satRx, satY - satRy, satX + satRx, satY + satRy);
-                canvas.drawOval(mTmp, mInk);
-            }
-            if (hasShape && inkAlpha > 0.003f) {
-                int base = mInk.getAlpha();
-                mInk.setAlpha(Math.round(base * MathUtils.constrain(inkAlpha, 0f, 1f)));
-                canvas.drawPath(mShape, mInk);
-                mInk.setAlpha(base);
-            }
-
+            boolean shapeIsLiquid = hasShape && inkAlpha > (blurStyle ? 0.99f : 0.3f);
             if (liquid) {
                 mUnion.rewind();
                 if (originVisible && originMoving) {
@@ -1088,7 +1110,6 @@ final class MistDropHeadsUpAnimator {
                 if (neckVisible) {
                     mUnion.op(mNeck, Path.Op.UNION);
                 }
-                boolean shapeIsLiquid = hasShape && inkAlpha > 0.3f;
                 if (shapeIsLiquid) {
                     mUnion.op(mShape, Path.Op.UNION);
                 }
@@ -1098,12 +1119,51 @@ final class MistDropHeadsUpAnimator {
                             Path.Direction.CW);
                     mUnion.op(mPart, Path.Op.UNION);
                 }
+            }
+
+            if (blurStyle) {
+                if (!mUnion.isEmpty()) {
+                    canvas.drawPath(mUnion, mInk);
+                }
+                if (hasShape && !shapeIsLiquid && inkAlpha > 0.003f) {
+                    int base = mInk.getAlpha();
+                    mInk.setAlpha(Math.round(base * MathUtils.constrain(inkAlpha, 0f, 1f)));
+                    canvas.drawPath(mShape, mInk);
+                    mInk.setAlpha(base);
+                }
+            } else {
+                if (originVisible) {
+                    canvas.drawRoundRect(mOriginRect, originCorner, originCorner, mInk);
+                }
+                if (neckVisible) {
+                    canvas.drawPath(mNeck, mInk);
+                }
+                if (satVisible) {
+                    mTmp.set(satX - satRx, satY - satRy, satX + satRx, satY + satRy);
+                    canvas.drawOval(mTmp, mInk);
+                }
+                if (hasShape && inkAlpha > 0.003f) {
+                    int base = mInk.getAlpha();
+                    mInk.setAlpha(Math.round(base * MathUtils.constrain(inkAlpha, 0f, 1f)));
+                    canvas.drawPath(mShape, mInk);
+                    mInk.setAlpha(base);
+                }
+            }
+
+            if (liquid) {
                 if (!mUnion.isEmpty()) {
                     mGloss.setAlpha(alpha(mGlossAlpha));
                     canvas.drawPath(mUnion, mGloss);
                 }
-                if (shapeIsLiquid) {
+                if (hasShape && !shapeIsLiquid && inkAlpha > 0.003f && !blurStyle) {
+                    mGloss.setAlpha(alpha(mGlossAlpha * inkAlpha));
+                    canvas.drawPath(mShape, mGloss);
+                }
+                if (hasShape && inkAlpha > 0.003f) {
                     drawShine(canvas, shape, inkAlpha);
+                    if (mStyle == STYLE_GLOSSY) {
+                        drawSweep(canvas, shape, shineSweep, inkAlpha);
+                    }
                 }
                 if (originVisible && originMoving) {
                     drawShine(canvas, mOriginRect, 0.8f);
@@ -1116,7 +1176,7 @@ final class MistDropHeadsUpAnimator {
 
             if (hasShape && fillAlpha > 0.003f) {
                 mFill.setColor(fillColor);
-                mFill.setAlpha(alpha(fillAlpha));
+                mFill.setAlpha(alpha(fillAlpha * Color.alpha(fillColor) / 255f));
                 canvas.drawPath(mShape, mFill);
             }
             if (hasShape && glassAlpha > 0.003f) {
@@ -1125,7 +1185,7 @@ final class MistDropHeadsUpAnimator {
                 canvas.drawPath(mShape, mGlass);
             }
             if (hasShape && rimAlpha > 0.003f) {
-                mRim.setAlpha(alpha(rimAlpha * 0.7f));
+                mRim.setAlpha(alpha(rimAlpha * mRimStrength));
                 canvas.drawPath(mShape, mRim);
             }
             if (hasShape && rippleAlpha > 0.003f) {
