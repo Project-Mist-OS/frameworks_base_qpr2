@@ -561,8 +561,11 @@ public class StackStateAnimator {
                 changingView.performAddAnimation(0, ANIMATION_DURATION_HEADS_UP_CYCLING,
                         /* isHeadsUpAppear= */ true, /* isHeadsUpCycling= */ true, onAnimationEnd);
             } else if (event.animationType == ANIMATION_TYPE_HEADS_UP_APPEAR
-                    && mDropAnimator.canAnimateAppear(changingView, event.headsUpFromBottom,
-                            event.headsUpHasStatusBarChip)) {
+                    && mDropAnimator.canAnimateAppear(changingView,
+                            changingView.getViewState() != null
+                                    ? changingView.getViewState().height
+                                    : changingView.getActualHeight(),
+                            event.headsUpFromBottom, event.headsUpHasStatusBarChip)) {
                 mHeadsUpAppearChildren.add(changingView);
                 mTmpState.copyFrom(changingView.getViewState());
                 mTmpState.applyToView(changingView);

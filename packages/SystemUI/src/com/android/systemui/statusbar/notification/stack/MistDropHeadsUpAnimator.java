@@ -22,6 +22,7 @@ import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
@@ -39,14 +40,17 @@ import android.graphics.drawable.Drawable;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.ArrayMap;
+import android.util.Log;
 import android.util.MathUtils;
 import android.view.DisplayCutout;
 import android.view.View;
 import android.view.ViewParent;
+import android.view.ViewRootImpl;
 import android.view.WindowInsets;
 import android.view.animation.Interpolator;
 
 import com.android.app.animation.Interpolators;
+import com.android.internal.graphics.drawable.BackgroundBlurDrawable;
 import com.android.internal.policy.SystemBarUtils;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
@@ -54,6 +58,8 @@ import com.android.systemui.statusbar.notification.row.ExpandableView;
 import java.util.function.BooleanSupplier;
 
 final class MistDropHeadsUpAnimator {
+
+    private static final String TAG = "MistDropHeadsUp";
 
     static final String KEY_ENABLED = "mist_heads_up_drop_enabled";
     static final String KEY_ORIGIN = "mist_heads_up_drop_origin";
@@ -71,18 +77,31 @@ final class MistDropHeadsUpAnimator {
     static final int ORIGIN_RIGHT = 5;
     static final int ORIGIN_CUSTOM = 6;
 
-    private static final float APPEAR_TOTAL = 760f;
-    private static final float A_BULGE_END = 90f;
-    private static final float A_IMPACT = 200f;
-    private static final float A_BREAK = 215f;
-    private static final float A_REVEAL_START = 230f;
-    private static final float A_REVEAL_ALPHA_END = 400f;
-    private static final float A_REVEAL_BLUR_END = 470f;
-    private static final float A_COLOR_END = 300f;
-    private static final float A_BLOB_FADE_START = 290f;
-    private static final float A_BLOB_FADE_END = 430f;
-    private static final float A_SATELLITE_END = 700f;
-    private static final float A_SEED_OUT_START = 600f;
+    private static final float A_STATUS_OUT_END = 80f;
+    private static final float A_SWELL_START = 40f;
+    private static final float A_DRIP = 240f;
+    private static final float A_BULGE_END = A_DRIP + 50f;
+    private static final float A_IMPACT = A_DRIP + 130f;
+    private static final float A_SQUASH_START = A_IMPACT - 30f;
+    private static final float A_BREAK = A_IMPACT + 15f;
+    private static final float A_GLASS_IN_END = A_IMPACT + 50f;
+    private static final float A_GLOW_PEAK = A_IMPACT + 110f;
+    private static final float A_GLOW_END = A_IMPACT + 300f;
+    private static final float A_STATUS_IN_START = A_IMPACT + 80f;
+    private static final float A_STATUS_IN_END = A_IMPACT + 160f;
+    private static final float A_REVEAL_START = A_IMPACT + 110f;
+    private static final float A_REVEAL_ALPHA_END = A_IMPACT + 260f;
+    private static final float A_REVEAL_BLUR_END = A_IMPACT + 330f;
+    private static final float A_GLASS_OUT_START = A_IMPACT + 200f;
+    private static final float A_GLASS_OUT_END = A_IMPACT + 360f;
+    private static final float A_RADIUS_START = A_IMPACT + 250f;
+    private static final float A_RADIUS_END = A_IMPACT + 420f;
+    private static final float A_TIP_START = A_IMPACT - 10f;
+    private static final float A_TIP_END = A_IMPACT + 70f;
+    private static final float A_RIPPLE_END = A_IMPACT + 180f;
+    private static final float A_SATELLITE_END = A_BREAK + 560f;
+    private static final float APPEAR_TOTAL = A_IMPACT + 630f;
+    private static final float A_SEED_OUT_START = APPEAR_TOTAL - 160f;
 
     private static final float DISAPPEAR_TOTAL = 460f;
     private static final float D_SHRINK_END = 200f;
@@ -95,9 +114,6 @@ final class MistDropHeadsUpAnimator {
     private static final float D_NECK_START = 250f;
     private static final float D_RISE_END = 360f;
     private static final float D_SEED_OUT_START = 380f;
-
-    private static final float SPRING_DAMPING = 0.62f;
-    private static final float SPRING_RESPONSE_MS = 430f;
 
     private static final int INK_COLOR = Color.BLACK;
 
@@ -137,27 +153,44 @@ final class MistDropHeadsUpAnimator {
         }
     }
 
-    boolean canAnimateAppear(ExpandableView view, boolean fromBottom, boolean hasChip) {
-        return isUsable(view) && !fromBottom && !hasChip;
+    boolean canAnimateAppear(ExpandableView view, int targetHeight, boolean fromBottom,
+            boolean hasChip) {
+        return check(view, targetHeight, fromBottom, hasChip, true);
     }
 
     boolean canAnimateDisappear(ExpandableView view, boolean fromBottom, boolean hasChip) {
-        return mExitEnabled && isUsable(view) && !fromBottom && !hasChip;
+        return mExitEnabled
+                && check(view, view.getActualHeight(), fromBottom, hasChip, false);
+    }
+
+    private boolean check(ExpandableView view, int height, boolean fromBottom, boolean hasChip,
+            boolean appear) {
+        if (!mEnabled) return false;
+        String reason = null;
+        if (mHost == null || !mHost.isAttachedToWindow()) {
+            reason = "host detached";
+        } else if (!ValueAnimator.areAnimatorsEnabled()) {
+            reason = "animations off";
+        } else if (!(view instanceof ExpandableNotificationRow)) {
+            reason = "not a row";
+        } else if (view.getWidth() <= 0 || height <= 0) {
+            reason = "no size " + view.getWidth() + "x" + height;
+        } else if (mShadeExpanded.getAsBoolean()) {
+            reason = "shade expanded";
+        } else if (fromBottom) {
+            reason = "from bottom";
+        } else if (hasChip) {
+            reason = "status bar chip";
+        }
+        if (reason != null) {
+            Log.d(TAG, (appear ? "appear" : "disappear") + " skipped: " + reason);
+            return false;
+        }
+        return true;
     }
 
     long getDisappearDuration() {
         return Math.round(DISAPPEAR_TOTAL / mSpeed);
-    }
-
-    private boolean isUsable(ExpandableView view) {
-        return mEnabled
-                && mHost != null
-                && ValueAnimator.areAnimatorsEnabled()
-                && view instanceof ExpandableNotificationRow
-                && view.getWidth() > 0
-                && view.getActualHeight() > 0
-                && mHost.isAttachedToWindow()
-                && !mShadeExpanded.getAsBoolean();
     }
 
     void finish(View view) {
@@ -207,14 +240,23 @@ final class MistDropHeadsUpAnimator {
         return interpolator.getInterpolation(progress(t, start, end));
     }
 
-    private static float spring(float ms) {
+    private static float spring(float ms, float damping, float responseMs) {
         if (ms <= 0f) return 0f;
-        double omega = 2.0 * Math.PI / (SPRING_RESPONSE_MS / 1000.0);
-        double zeta = SPRING_DAMPING;
-        double wd = omega * Math.sqrt(1.0 - zeta * zeta);
+        double omega = 2.0 * Math.PI / (responseMs / 1000.0);
+        double wd = omega * Math.sqrt(1.0 - damping * damping);
         double t = ms / 1000.0;
-        double decay = Math.exp(-zeta * omega * t);
-        return (float) (1.0 - decay * (Math.cos(wd * t) + (zeta * omega / wd) * Math.sin(wd * t)));
+        double decay = Math.exp(-damping * omega * t);
+        return (float) (1.0 - decay * (Math.cos(wd * t) + (damping * omega / wd) * Math.sin(wd * t)));
+    }
+
+    private static float wobble(float ms, float periodMs, float decayMs) {
+        if (ms <= 0f) return 0f;
+        return (float) (Math.exp(-ms / decayMs) * Math.sin(2.0 * Math.PI * ms / periodMs));
+    }
+
+    private static float bell(float t, float start, float end) {
+        float p = progress(t, start, end);
+        return (float) Math.sin(Math.PI * p);
     }
 
     private boolean isIslandActive() {
@@ -324,7 +366,7 @@ final class MistDropHeadsUpAnimator {
         final ExpandableView view;
         final View root;
         final boolean appear;
-        final DropDrawable drawable = new DropDrawable();
+        final DropDrawable drawable;
         final Matrix matrix = new Matrix();
         final RectF rowBounds = new RectF();
         final RectF startBounds = new RectF();
@@ -345,11 +387,21 @@ final class MistDropHeadsUpAnimator {
         boolean satSpawned;
         boolean finished;
         boolean endPending;
+        boolean statusBarTouched;
 
         Run(ExpandableView view, View root, boolean appear) {
             this.view = view;
             this.root = root;
             this.appear = appear;
+            this.drawable = new DropDrawable(mDensity, isNight());
+        }
+
+        private boolean isNight() {
+            try {
+                return mContext.getResources().getConfiguration().isNightModeActive();
+            } catch (Exception e) {
+                return true;
+            }
         }
 
         boolean prepare() {
@@ -366,9 +418,19 @@ final class MistDropHeadsUpAnimator {
             bgColor = Color.alpha(tint) == 0 ? Color.DKGRAY : (tint | 0xFF000000);
             rowRadius = Math.min(view.getTopCornerRadius(), rowBounds.height() / 2f);
             dropRadius = Math.max(Math.min(origin.halfW, origin.halfH) * 1.05f, dp(5f));
-            capsuleH = Math.min(rowBounds.height() * 0.6f, dp(28f));
+            capsuleH = Math.min(rowBounds.height() * 0.5f, dp(24f));
             capsuleW = Math.min(rowBounds.width(),
-                    Math.max(capsuleH * 2f, rowBounds.width() * 0.36f));
+                    Math.max(capsuleH * 2.4f, rowBounds.width() * 0.34f));
+            if (appear) {
+                try {
+                    ViewRootImpl vri = root.getViewRootImpl();
+                    if (vri != null) {
+                        drawable.setBlurDrawable(vri.createBackgroundBlurDrawable());
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "no background blur", t);
+                }
+            }
             return true;
         }
 
@@ -413,9 +475,13 @@ final class MistDropHeadsUpAnimator {
             if (mRuns.get(view) == this) {
                 mRuns.remove(view);
             }
+            drawable.release();
             root.getOverlay().remove(drawable);
             view.setAnimationMatrix(null);
             view.setRenderEffect(null);
+            if (statusBarTouched) {
+                MistDropStatusBar.setAlpha(1f);
+            }
             if (onEnd != null) {
                 onEnd.run();
             }
@@ -425,12 +491,19 @@ final class MistDropHeadsUpAnimator {
             float total = appear ? APPEAR_TOTAL : DISAPPEAR_TOTAL;
             float t = fraction * total;
             if (!computeRowBounds(rowBounds)) rowBounds.set(startBounds);
+            drawable.reset();
+            drawable.origin = origin;
             if (appear) {
                 appearFrame(t);
             } else {
                 disappearFrame(t);
             }
             drawable.invalidateSelf();
+        }
+
+        private void setStatusBarAlpha(float alpha) {
+            statusBarTouched = true;
+            MistDropStatusBar.setAlpha(alpha);
         }
 
         private void appearFrame(float t) {
@@ -440,97 +513,133 @@ final class MistDropHeadsUpAnimator {
             float impactCy = r.top + capsuleH / 2f;
             float impactCx = impactX(r);
 
-            d.originScale = o.physical ? 1f
-                    : progress(t, 0f, A_BULGE_END, Interpolators.FAST_OUT_SLOW_IN)
-                            * (1f - progress(t, A_SEED_OUT_START, APPEAR_TOTAL,
-                                    Interpolators.FAST_OUT_SLOW_IN));
+            setStatusBarAlpha(Math.max(1f - progress(t, 0f, A_STATUS_OUT_END,
+                    Interpolators.FAST_OUT_SLOW_IN),
+                    progress(t, A_STATUS_IN_START, A_STATUS_IN_END,
+                            Interpolators.LINEAR_OUT_SLOW_IN)));
+
+            float swell = progress(t, A_SWELL_START, A_DRIP, Interpolators.FAST_OUT_SLOW_IN)
+                    * (1f - progress(t, A_DRIP, A_IMPACT, Interpolators.FAST_OUT_SLOW_IN));
+            float recoil = wobble(t - A_BREAK, 120f, 110f);
+            float grow = o.physical ? 1f : MathUtils.constrain(spring(t, 0.5f, 260f), 0f, 1.3f)
+                    * (1f - progress(t, A_SEED_OUT_START, APPEAR_TOTAL,
+                            Interpolators.FAST_OUT_SLOW_IN));
+            d.originScaleX = grow * (1f + 0.10f * swell - 0.06f * recoil);
+            d.originScaleY = grow * (1f + 0.20f * swell + 0.10f * recoil);
+
+            if (t < A_DRIP) {
+                hideRow();
+                return;
+            }
 
             if (t < A_IMPACT) {
-                float bulge = progress(t, 0f, A_BULGE_END, Interpolators.FAST_OUT_SLOW_IN);
+                float local = t - A_DRIP;
+                float bulge = MathUtils.constrain(spring(local, 0.45f, 160f), 0f, 1.25f);
                 float rd = dropRadius * bulge;
-                float hangY = o.cy + o.halfH + dropRadius * 0.9f;
+                float hangY = o.cy + o.halfH * d.originScaleY + dropRadius * 0.9f;
                 float fall = progress(t, A_BULGE_END, A_IMPACT, Interpolators.FAST_OUT_LINEAR_IN);
-                float cy = MathUtils.lerp(MathUtils.lerp(o.cy, hangY, bulge), impactCy, fall);
-                float stretch = 1f + 0.28f * fall;
-                float squash = progress(t, A_IMPACT - 40f, A_IMPACT,
+                float cy = MathUtils.lerp(MathUtils.lerp(o.cy, hangY,
+                        Math.min(bulge, 1f)), impactCy, fall);
+                float jiggle = 0.18f * wobble(local, 90f, 80f);
+                float stretch = 1f + 0.30f * fall + jiggle;
+                float squash = progress(t, A_SQUASH_START, A_IMPACT,
                         Interpolators.FAST_OUT_SLOW_IN);
-                float halfW = MathUtils.lerp(rd * (1f - 0.1f * fall), capsuleW / 2f, squash);
+                float halfW = MathUtils.lerp(rd * (1f - 0.12f * fall - jiggle * 0.5f),
+                        capsuleW / 2f, squash);
                 float halfH = MathUtils.lerp(rd * stretch, capsuleH / 2f, squash);
                 float bx = MathUtils.lerp(o.cx, impactCx, squash);
                 blob.set(bx - halfW, cy - halfH, bx + halfW, cy + halfH);
-                d.setBlob(blob, halfH, INK_COLOR, 1f);
+                d.setShape(blob, halfH, 0f, halfH * 0.25f * squash, 0f);
+                d.inkAlpha = 1f;
                 float waistStart = Math.min(o.neckWidth(), 2f * rd * 0.85f) * 0.75f;
                 float waist = waistStart * (float) Math.pow(1f - fall, 1.6f);
-                d.setNeck(o.cx, o.cy, o.neckWidth() * d.originScaleForNeck(o.physical),
+                d.setNeck(o.cx, o.cy, o.neckWidth() * Math.max(d.originScaleX, 0.35f),
                         bx, cy, Math.min(2f * halfH, 2f * halfW) * 0.8f,
                         Math.max(waist, dp(0.8f)));
+                d.tip = capsuleH * 0.9f * bell(t, A_TIP_START, A_TIP_END);
                 hideRow();
-            } else {
-                float p = spring(t - A_IMPACT);
-                float cx = MathUtils.lerp(impactCx, r.centerX(), p);
-                float halfW = MathUtils.lerp(capsuleW / 2f, r.width() / 2f, p);
-                float top = r.top;
-                float bottom = MathUtils.lerp(r.top + capsuleH, r.bottom, p);
-                blob.set(cx - halfW, top, cx + halfW, Math.max(bottom, top + dp(2f)));
-                float radiusMix = progress(t, A_IMPACT, A_REVEAL_BLUR_END,
-                        Interpolators.FAST_OUT_SLOW_IN);
-                float radius = Math.min(blob.height() / 2f,
-                        MathUtils.lerp(capsuleH / 2f, Math.max(rowRadius, capsuleH / 2f),
-                                radiusMix));
-                radius = MathUtils.lerp(radius, Math.min(rowRadius, blob.height() / 2f),
-                        progress(t, A_BLOB_FADE_START, A_BLOB_FADE_END));
-                int color = (int) mArgb.evaluate(progress(t, A_IMPACT, A_COLOR_END,
-                        Interpolators.FAST_OUT_SLOW_IN), INK_COLOR, bgColor);
-                float blobAlpha = 1f - progress(t, A_BLOB_FADE_START, A_BLOB_FADE_END,
-                        Interpolators.FAST_OUT_SLOW_IN);
-                d.setBlob(blob, radius, color, blobAlpha);
+                return;
+            }
 
-                if (t < A_BREAK) {
-                    d.setNeck(o.cx, o.cy, o.neckWidth() * d.originScaleForNeck(o.physical),
-                            cx, impactCy, capsuleH * 0.8f, dp(0.8f));
-                } else {
-                    d.neckVisible = false;
-                    if (!satSpawned) {
-                        satSpawned = true;
-                        satX = MathUtils.lerp(o.cx, impactCx, 0.45f);
-                        satY = MathUtils.lerp(o.cy + o.halfH, impactCy - capsuleH / 2f, 0.45f);
-                        satR = Math.max(dp(2.2f), Math.min(o.halfW, o.halfH) * 0.42f);
-                    }
-                }
+            float local = t - A_IMPACT;
+            float pw = spring(local, 0.55f, 260f);
+            float ph = spring(local, 0.42f, 340f);
+            float jelly = 0.07f * wobble(local, 170f, 190f);
+            float cx = MathUtils.lerp(impactCx, r.centerX(), pw);
+            float cy = MathUtils.lerp(impactCy, r.centerY(), ph);
+            float halfW = MathUtils.lerp(capsuleW / 2f, r.width() / 2f, pw) * (1f + jelly);
+            float halfH = Math.max(dp(1f),
+                    MathUtils.lerp(capsuleH / 2f, r.height() / 2f, ph) * (1f - jelly));
+            blob.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
 
-                float revealAlpha = progress(t, A_REVEAL_START, A_REVEAL_ALPHA_END,
-                        Interpolators.LINEAR_OUT_SLOW_IN);
-                float blur = dp(22f) * (1f - progress(t, A_REVEAL_START, A_REVEAL_BLUR_END,
-                        Interpolators.FAST_OUT_SLOW_IN));
-                transformRow(blob, revealAlpha, blur);
+            float radiusMix = progress(t, A_RADIUS_START, A_RADIUS_END,
+                    Interpolators.FAST_OUT_SLOW_IN);
+            float radius = MathUtils.lerp(halfH, Math.min(rowRadius, halfH), radiusMix);
+            float liquid = 1f - radiusMix;
+            float bulgeTop = 2f * halfH * 0.09f * wobble(local, 220f, 170f) * liquid;
+            float bulgeBottom = 2f * halfH * 0.12f * wobble(local - 25f, 220f, 170f) * liquid;
+            d.setShape(blob, radius, bulgeTop, bulgeBottom, 0f);
+            d.tip = capsuleH * 0.9f * bell(t, A_TIP_START, A_TIP_END);
+
+            float glassIn = progress(t, A_IMPACT, A_GLASS_IN_END, Interpolators.FAST_OUT_SLOW_IN);
+            float glassOut = 1f - progress(t, A_GLASS_OUT_START, A_GLASS_OUT_END,
+                    Interpolators.FAST_OUT_SLOW_IN);
+            d.inkAlpha = 1f - glassIn;
+            d.glassAlpha = glassIn * glassOut;
+            d.rimAlpha = glassIn * glassOut;
+            d.glowAlpha = progress(t, A_IMPACT + 40f, A_GLOW_PEAK,
+                    Interpolators.FAST_OUT_SLOW_IN)
+                    * (1f - progress(t, A_GLOW_PEAK, A_GLOW_END, Interpolators.FAST_OUT_SLOW_IN));
+
+            float ripple = progress(t, A_IMPACT, A_RIPPLE_END, Interpolators.LINEAR_OUT_SLOW_IN);
+            if (ripple > 0f && ripple < 1f) {
+                d.rippleAlpha = 0.35f * (1f - ripple);
+                d.rippleGrow = dp(14f) * ripple;
+            }
+
+            if (t < A_BREAK) {
+                d.setNeck(o.cx, o.cy, o.neckWidth() * Math.max(d.originScaleX, 0.35f),
+                        impactCx, impactCy, capsuleH * 0.8f, dp(0.8f));
+            } else if (!satSpawned) {
+                satSpawned = true;
+                satX = MathUtils.lerp(o.cx, impactCx, 0.45f);
+                satY = MathUtils.lerp(o.cy + o.halfH, impactCy - capsuleH / 2f, 0.45f);
+                satR = Math.max(dp(2.2f), Math.min(o.halfW, o.halfH) * 0.42f);
             }
 
             if (satSpawned) {
                 float s = progress(t, A_BREAK, A_SATELLITE_END);
-                d.satVisible = s < 1f;
-                d.satX = MathUtils.lerp(satX, o.cx, Interpolators.FAST_OUT_SLOW_IN
-                        .getInterpolation(s));
-                d.satY = MathUtils.lerp(satY, o.cy + o.halfH * 0.3f,
-                        Interpolators.FAST_OUT_SLOW_IN.getInterpolation(s));
-                d.satR = satR * (1f - Interpolators.FAST_OUT_LINEAR_IN.getInterpolation(s));
-            } else {
-                d.satVisible = false;
+                if (s < 1f) {
+                    float move = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(s);
+                    float size = satR * (1f - Interpolators.FAST_OUT_LINEAR_IN.getInterpolation(s));
+                    float elongate = 1f - progress(t, A_BREAK, A_BREAK + 45f,
+                            Interpolators.FAST_OUT_SLOW_IN);
+                    d.setSatellite(MathUtils.lerp(satX, o.cx, move),
+                            MathUtils.lerp(satY, o.cy + o.halfH * 0.3f, move),
+                            size * (1f - 0.25f * elongate), size * (1f + 0.6f * elongate));
+                }
             }
-            d.origin = o;
+
+            float revealAlpha = progress(t, A_REVEAL_START, A_REVEAL_ALPHA_END,
+                    Interpolators.LINEAR_OUT_SLOW_IN);
+            float blur = dp(20f) * (1f - progress(t, A_REVEAL_START, A_REVEAL_BLUR_END,
+                    Interpolators.FAST_OUT_SLOW_IN));
+            transformRow(blob, revealAlpha, blur);
         }
 
         private void disappearFrame(float t) {
             DropDrawable d = drawable;
             Origin o = origin;
             RectF s = startBounds;
-            d.origin = o;
-            d.satVisible = false;
 
             float seedIn = progress(t, D_SEED_IN_START, D_SEED_IN_END,
                     Interpolators.FAST_OUT_SLOW_IN);
             float seedOut = progress(t, D_SEED_OUT_START, DISAPPEAR_TOTAL,
                     Interpolators.FAST_OUT_SLOW_IN);
-            d.originScale = o.physical ? 1f : seedIn * (1f - seedOut);
+            float grow = o.physical ? 1f : seedIn * (1f - seedOut);
+            float gulp = wobble(t - D_RISE_END, 110f, 90f);
+            d.originScaleX = grow * (1f + 0.08f * gulp);
+            d.originScaleY = grow * (1f + 0.14f * gulp);
 
             if (t < D_SHRINK_END) {
                 float q = progress(t, 0f, D_SHRINK_END, Interpolators.FAST_OUT_SLOW_IN);
@@ -540,46 +649,43 @@ final class MistDropHeadsUpAnimator {
                 blob.set(cx - halfW, s.top, cx + halfW, bottom);
                 float radius = MathUtils.lerp(Math.min(rowRadius, blob.height() / 2f),
                         blob.height() / 2f, q);
-                int color = (int) mArgb.evaluate(progress(t, D_COLOR_START, D_SHRINK_END,
+                d.setShape(blob, radius, 0f, 0f, 0f);
+                d.fillColor = (int) mArgb.evaluate(progress(t, D_COLOR_START, D_SHRINK_END,
                         Interpolators.FAST_OUT_SLOW_IN), bgColor, INK_COLOR);
-                float blobAlpha = progress(t, 0f, D_BLOB_IN_END, Interpolators.LINEAR_OUT_SLOW_IN);
-                d.setBlob(blob, radius, color, blobAlpha);
-                d.neckVisible = false;
+                d.fillAlpha = progress(t, 0f, D_BLOB_IN_END, Interpolators.LINEAR_OUT_SLOW_IN);
                 float rowAlpha = 1f - progress(t, D_ROW_FADE_START, D_ROW_FADE_END,
                         Interpolators.FAST_OUT_SLOW_IN);
                 float blur = dp(22f) * progress(t, 0f, D_ROW_FADE_END,
                         Interpolators.FAST_OUT_SLOW_IN);
                 transformRow(blob, rowAlpha, blur);
-            } else {
-                hideRow();
-                float rise = progress(t, D_SHRINK_END, D_RISE_END, Interpolators.FAST_OUT_LINEAR_IN);
-                float absorb = progress(t, D_RISE_END, DISAPPEAR_TOTAL,
+                return;
+            }
+
+            hideRow();
+            float rise = progress(t, D_SHRINK_END, D_RISE_END, Interpolators.FAST_OUT_LINEAR_IN);
+            float absorb = progress(t, D_RISE_END, DISAPPEAR_TOTAL,
+                    Interpolators.FAST_OUT_SLOW_IN);
+            float startCy = s.top + capsuleH / 2f;
+            float hangY = o.cy + o.halfH + dropRadius * 0.9f;
+            float cy = MathUtils.lerp(MathUtils.lerp(startCy, hangY, rise), o.cy, absorb);
+            float cx = MathUtils.lerp(impactX(s), o.cx, rise);
+            float shape = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
+                    progress(t, D_SHRINK_END, D_SHRINK_END + 90f));
+            float jiggle = 0.16f * wobble(t - D_SHRINK_END, 100f, 90f);
+            float halfW = MathUtils.lerp(capsuleW / 2f, dropRadius * 0.92f, shape)
+                    * (1f - jiggle) * (1f - absorb);
+            float halfH = MathUtils.lerp(capsuleH / 2f, dropRadius * 1.15f, shape)
+                    * (1f + jiggle) * (1f - absorb);
+            blob.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+            d.setShape(blob, Math.min(halfW, halfH), 0f, 0f, 0f);
+            d.inkAlpha = halfW > 0.5f ? 1f : 0f;
+            if (t >= D_NECK_START && halfW > 0.5f) {
+                float neck = progress(t, D_NECK_START, D_RISE_END,
                         Interpolators.FAST_OUT_SLOW_IN);
-                float startCy = s.top + capsuleH / 2f;
-                float hangY = o.cy + o.halfH + dropRadius * 0.9f;
-                float cy = MathUtils.lerp(MathUtils.lerp(startCy, hangY, rise), o.cy, absorb);
-                float cx = MathUtils.lerp(impactX(s), o.cx, rise);
-                float halfW = MathUtils.lerp(capsuleW / 2f, dropRadius * 0.92f,
-                        Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
-                                progress(t, D_SHRINK_END, D_SHRINK_END + 90f)));
-                float halfH = MathUtils.lerp(capsuleH / 2f, dropRadius * 1.15f,
-                        Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
-                                progress(t, D_SHRINK_END, D_SHRINK_END + 90f)));
-                halfW *= 1f - absorb;
-                halfH *= 1f - absorb;
-                blob.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
-                d.setBlob(blob, Math.min(halfW, halfH), INK_COLOR,
-                        halfW > 0.5f ? 1f : 0f);
-                if (t >= D_NECK_START && halfW > 0.5f) {
-                    float neck = progress(t, D_NECK_START, D_RISE_END,
-                            Interpolators.FAST_OUT_SLOW_IN);
-                    float waist = Math.min(o.neckWidth(), 2f * halfW) * 0.75f * neck;
-                    d.setNeck(o.cx, o.cy, o.neckWidth() * d.originScaleForNeck(o.physical),
-                            cx, cy, Math.min(2f * halfH, 2f * halfW) * 0.8f,
-                            Math.max(waist, dp(0.8f)));
-                } else {
-                    d.neckVisible = false;
-                }
+                float waist = Math.min(o.neckWidth(), 2f * halfW) * 0.75f * neck;
+                d.setNeck(o.cx, o.cy, o.neckWidth() * Math.max(d.originScaleX, 0.35f),
+                        cx, cy, Math.min(2f * halfH, 2f * halfW) * 0.8f,
+                        Math.max(waist, dp(0.8f)));
             }
         }
 
@@ -625,6 +731,7 @@ final class MistDropHeadsUpAnimator {
                 v = pv;
             }
             int height = view.getActualHeight();
+            if (height <= 0 && view.getViewState() != null) height = view.getViewState().height;
             if (view.getWidth() <= 0 || height <= 0) return false;
             out.set(x, y, x + view.getWidth(), y + height);
             return out.height() > 0f;
@@ -632,38 +739,117 @@ final class MistDropHeadsUpAnimator {
     }
 
     private static final class DropDrawable extends Drawable {
-        private final Paint mInk = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint mBlobPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path mNeck = new Path();
-        private final RectF mTmp = new RectF();
-        final RectF blob = new RectF();
+        private static final float K = 0.5523f;
 
+        private final Paint mInk = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mGlass = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mRim = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mGlow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mRipple = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path mNeck = new Path();
+        private final Path mShape = new Path();
+        private final RectF mTmp = new RectF();
+        private final Rect mTmpInt = new Rect();
+        private final float mDensity;
+        private final int mGlassColor;
+        private final int mGlassBlurColor;
+        private final float mGlassBlurRadius;
+        private BackgroundBlurDrawable mBlur;
+
+        final RectF shape = new RectF();
         Origin origin;
-        float originScale;
-        float blobRadius;
-        int blobColor;
-        float blobAlpha;
+        float originScaleX;
+        float originScaleY;
+        float radius;
+        float bulgeTop;
+        float bulgeBottom;
+        float tip;
+        float inkAlpha;
+        float fillAlpha;
+        int fillColor;
+        float glassAlpha;
+        float rimAlpha;
+        float glowAlpha;
+        float rippleAlpha;
+        float rippleGrow;
         boolean neckVisible;
         boolean satVisible;
         float satX;
         float satY;
-        float satR;
+        float satRx;
+        float satRy;
 
-        DropDrawable() {
+        DropDrawable(float density, boolean night) {
+            mDensity = density;
             mInk.setStyle(Paint.Style.FILL);
             mInk.setColor(INK_COLOR);
-            mBlobPaint.setStyle(Paint.Style.FILL);
+            mFill.setStyle(Paint.Style.FILL);
+            mGlass.setStyle(Paint.Style.FILL);
+            mGlassColor = night ? Color.argb(92, 255, 255, 255) : Color.argb(190, 255, 255, 255);
+            mGlassBlurColor = night ? Color.argb(40, 255, 255, 255) : Color.argb(70, 255, 255, 255);
+            mGlassBlurRadius = 30f * density;
+            mRim.setStyle(Paint.Style.STROKE);
+            mRim.setStrokeWidth(1.6f * density);
+            mRim.setColor(Color.WHITE);
+            mGlow.setStyle(Paint.Style.FILL);
+            mGlow.setColor(Color.WHITE);
+            mGlow.setMaskFilter(new BlurMaskFilter(16f * density, BlurMaskFilter.Blur.NORMAL));
+            mRipple.setStyle(Paint.Style.STROKE);
+            mRipple.setStrokeWidth(1.2f * density);
+            mRipple.setColor(Color.WHITE);
         }
 
-        float originScaleForNeck(boolean physical) {
-            return physical ? 1f : Math.max(originScale, 0.35f);
+        void setBlurDrawable(BackgroundBlurDrawable blur) {
+            mBlur = blur;
+            if (mBlur != null) {
+                mBlur.setXfermode(null);
+                mBlur.setBlurRadius(0);
+                mBlur.setColor(Color.TRANSPARENT);
+            }
         }
 
-        void setBlob(RectF rect, float radius, int color, float alpha) {
-            blob.set(rect);
-            blobRadius = radius;
-            blobColor = color;
-            blobAlpha = alpha;
+        void release() {
+            if (mBlur != null) {
+                mBlur.setBlurRadius(0);
+                mBlur.setColor(Color.TRANSPARENT);
+                mBlur.setVisible(false, false);
+            }
+        }
+
+        void reset() {
+            originScaleX = 0f;
+            originScaleY = 0f;
+            shape.setEmpty();
+            radius = 0f;
+            bulgeTop = 0f;
+            bulgeBottom = 0f;
+            tip = 0f;
+            inkAlpha = 0f;
+            fillAlpha = 0f;
+            glassAlpha = 0f;
+            rimAlpha = 0f;
+            glowAlpha = 0f;
+            rippleAlpha = 0f;
+            rippleGrow = 0f;
+            neckVisible = false;
+            satVisible = false;
+        }
+
+        void setShape(RectF rect, float r, float top, float bottom, float tipLength) {
+            shape.set(rect);
+            radius = r;
+            bulgeTop = top;
+            bulgeBottom = bottom;
+            tip = tipLength;
+        }
+
+        void setSatellite(float x, float y, float rx, float ry) {
+            satVisible = rx > 0.3f && ry > 0.3f;
+            satX = x;
+            satY = y;
+            satRx = rx;
+            satRy = ry;
         }
 
         void setNeck(float ax, float ay, float topWidth, float bx, float by, float bottomWidth,
@@ -686,26 +872,118 @@ final class MistDropHeadsUpAnimator {
             mNeck.close();
         }
 
+        private void buildShape() {
+            RectF r = shape;
+            float h = r.height();
+            float rr = Math.max(0f, Math.min(radius, Math.min(h, r.width()) / 2f));
+            float l = r.left;
+            float t = r.top;
+            float ri = r.right;
+            float b = r.bottom;
+            float cy = r.centerY();
+            float span = (ri - l) - 2f * rr;
+            float c = 4f / 3f;
+            mShape.rewind();
+            mShape.moveTo(l + rr, t);
+            mShape.cubicTo(l + rr + span / 3f, t - bulgeTop * c,
+                    ri - rr - span / 3f, t - bulgeTop * c, ri - rr, t);
+            if (tip > 0.5f) {
+                mShape.cubicTo(ri - rr + rr * K, t, ri + tip * 0.35f, cy - rr * 0.45f,
+                        ri + tip, cy);
+                mShape.cubicTo(ri + tip * 0.35f, cy + rr * 0.45f, ri - rr + rr * K, b,
+                        ri - rr, b);
+            } else {
+                mShape.cubicTo(ri - rr + rr * K, t, ri, t + rr - rr * K, ri, t + rr);
+                mShape.lineTo(ri, b - rr);
+                mShape.cubicTo(ri, b - rr + rr * K, ri - rr + rr * K, b, ri - rr, b);
+            }
+            mShape.cubicTo(ri - rr - span / 3f, b + bulgeBottom * c,
+                    l + rr + span / 3f, b + bulgeBottom * c, l + rr, b);
+            if (tip > 0.5f) {
+                mShape.cubicTo(l + rr - rr * K, b, l - tip * 0.35f, cy + rr * 0.45f,
+                        l - tip, cy);
+                mShape.cubicTo(l - tip * 0.35f, cy - rr * 0.45f, l + rr - rr * K, t,
+                        l + rr, t);
+            } else {
+                mShape.cubicTo(l + rr - rr * K, b, l, b - rr + rr * K, l, b - rr);
+                mShape.lineTo(l, t + rr);
+                mShape.cubicTo(l, t + rr - rr * K, l + rr - rr * K, t, l + rr, t);
+            }
+            mShape.close();
+        }
+
+        private static int alpha(float a) {
+            return Math.round(255f * MathUtils.constrain(a, 0f, 1f));
+        }
+
         @Override
         public void draw(Canvas canvas) {
             Origin o = origin;
             if (o == null) return;
-            if (originScale > 0.01f) {
-                float hw = o.halfW * originScale;
-                float hh = o.halfH * originScale;
+
+            boolean hasShape = !shape.isEmpty();
+            if (hasShape) buildShape();
+
+            if (hasShape && glowAlpha > 0.003f) {
+                mGlow.setAlpha(alpha(glowAlpha * 0.55f));
+                canvas.drawPath(mShape, mGlow);
+            }
+
+            if (mBlur != null) {
+                if (hasShape && glassAlpha > 0.003f) {
+                    shape.round(mTmpInt);
+                    mBlur.setBounds(mTmpInt);
+                    mBlur.setCornerRadius(Math.min(radius, shape.height() / 2f));
+                    mBlur.setBlurRadius(Math.round(mGlassBlurRadius * glassAlpha));
+                    mBlur.setColor(Color.argb(Math.round(Color.alpha(mGlassBlurColor)
+                            * glassAlpha), 255, 255, 255));
+                } else {
+                    mBlur.setBlurRadius(0);
+                    mBlur.setColor(Color.TRANSPARENT);
+                }
+                mBlur.draw(canvas);
+            }
+
+            if (originScaleX > 0.01f && originScaleY > 0.01f) {
+                float hw = o.halfW * originScaleX;
+                float hh = o.halfH * originScaleY;
                 mTmp.set(o.cx - hw, o.cy - hh, o.cx + hw, o.cy + hh);
-                canvas.drawRoundRect(mTmp, hh, hh, mInk);
+                float corner = Math.min(hw, hh);
+                canvas.drawRoundRect(mTmp, corner, corner, mInk);
             }
             if (neckVisible) {
                 canvas.drawPath(mNeck, mInk);
             }
-            if (satVisible && satR > 0.3f) {
-                canvas.drawCircle(satX, satY, satR, mInk);
+            if (satVisible) {
+                mTmp.set(satX - satRx, satY - satRy, satX + satRx, satY + satRy);
+                canvas.drawOval(mTmp, mInk);
             }
-            if (blobAlpha > 0.003f && !blob.isEmpty()) {
-                mBlobPaint.setColor(blobColor);
-                mBlobPaint.setAlpha(Math.round(255 * blobAlpha));
-                canvas.drawRoundRect(blob, blobRadius, blobRadius, mBlobPaint);
+
+            if (hasShape && inkAlpha > 0.003f) {
+                mInk.setAlpha(alpha(inkAlpha));
+                canvas.drawPath(mShape, mInk);
+                mInk.setAlpha(255);
+            }
+            if (hasShape && fillAlpha > 0.003f) {
+                mFill.setColor(fillColor);
+                mFill.setAlpha(alpha(fillAlpha));
+                canvas.drawPath(mShape, mFill);
+            }
+            if (hasShape && glassAlpha > 0.003f) {
+                mGlass.setColor(mGlassColor);
+                mGlass.setAlpha(alpha(glassAlpha * Color.alpha(mGlassColor) / 255f));
+                canvas.drawPath(mShape, mGlass);
+            }
+            if (hasShape && rimAlpha > 0.003f) {
+                mRim.setAlpha(alpha(rimAlpha * 0.7f));
+                canvas.drawPath(mShape, mRim);
+            }
+            if (hasShape && rippleAlpha > 0.003f) {
+                mTmp.set(shape);
+                mTmp.inset(-rippleGrow, -rippleGrow);
+                float rr = Math.min(radius + rippleGrow, mTmp.height() / 2f);
+                mRipple.setAlpha(alpha(rippleAlpha));
+                canvas.drawRoundRect(mTmp, rr, rr, mRipple);
             }
         }
 
