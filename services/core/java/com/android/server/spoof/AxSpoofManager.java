@@ -490,16 +490,19 @@ public class AxSpoofManager implements IAxSpoofManager {
             return;
         }
 
+        String content = getCached(Settings.Secure.SPOOF_PIF_CONFIG);
+        final boolean configMissing = isEmpty(content);
+
+        // A missing config skips the cooldown, so a reset or a fresh install
+        // gets a fingerprint right away instead of up to a day later.
         long lastFetch = Settings.Secure.getLongForUser(
                 mResolver, LAST_AUTO_FETCH_KEY, 0L, UserHandle.USER_SYSTEM);
-        if (lastFetch > 0L
+        if (!configMissing && lastFetch > 0L
                 && System.currentTimeMillis() - lastFetch < AUTO_FETCH_COOLDOWN_MS) {
             return;
         }
 
-        String content = getCached(Settings.Secure.SPOOF_PIF_CONFIG);
-        JSONObject existing = (content != null && !content.isEmpty())
-                ? new JSONObject(content) : new JSONObject();
+        JSONObject existing = configMissing ? new JSONObject() : new JSONObject(content);
         if (existing.optBoolean("manually_imported", false)) return;
 
         String canaryMonth = existing.optString("_canary_month", "");
@@ -509,9 +512,12 @@ public class AxSpoofManager implements IAxSpoofManager {
                 : PixelDeviceRepository.getDaysUntilExpiry(canaryMonth, releaseDate);
         if (daysLeft != null && daysLeft > REFETCH_WINDOW_DAYS) return;
 
+        // Without a config, this month's cached profiles are enough. A forced crawl
+        // of every Pixel can outlast REFRESH_STEP_DEADLINE_MS on a slow connection,
+        // which left a fresh install with no fingerprint at all.
         PixelDeviceRepository.PixelProfile matched = runBounded(mFingerprintExecutor, () -> {
             List<PixelDeviceRepository.PixelProfile> profiles =
-                    PixelDeviceRepository.getProfiles(mContext, true);
+                    PixelDeviceRepository.getProfiles(mContext, !configMissing);
             String defaultCodename = PixelDeviceRepository.getDefaultPifCodename(profiles);
             return PixelDeviceRepository.getProfileByCodename(mContext, defaultCodename, false);
         });
