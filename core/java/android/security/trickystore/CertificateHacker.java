@@ -16,6 +16,8 @@ import com.android.internal.org.bouncycastle.asn1.DEROctetString;
 import com.android.internal.org.bouncycastle.asn1.DERSequence;
 import com.android.internal.org.bouncycastle.asn1.DERTaggedObject;
 import com.android.internal.org.bouncycastle.asn1.x509.AlgorithmIdentifier;
+import com.android.internal.org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
+import com.android.internal.org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
 import com.android.internal.org.bouncycastle.asn1.x509.Extension;
 import com.android.internal.org.bouncycastle.cert.X509CertificateHolder;
 import com.android.internal.org.bouncycastle.cert.X509v3CertificateBuilder;
@@ -23,6 +25,7 @@ import com.android.internal.org.bouncycastle.crypto.digests.SHA256Digest;
 import com.android.internal.org.bouncycastle.crypto.params.ECDomainParameters;
 import com.android.internal.org.bouncycastle.crypto.params.ECPrivateKeyParameters;
 import com.android.internal.org.bouncycastle.crypto.params.RSAKeyParameters;
+import com.android.internal.org.bouncycastle.crypto.params.RSAPrivateCrtKeyParameters;
 import com.android.internal.org.bouncycastle.crypto.signers.ECDSASigner;
 import com.android.internal.org.bouncycastle.crypto.signers.RSADigestSigner;
 import com.android.internal.org.bouncycastle.jcajce.provider.asymmetric.ec.BCECPrivateKey;
@@ -162,6 +165,17 @@ public final class CertificateHacker {
                 String oidString = oid.toString();
                 if (oidString.equals(CertificateGenerator.ATTESTATION_OID.getId())) {
                     builder.addExtension(hackedExtension);
+                } else if (oidString.equals(Extension.authorityKeyIdentifier.getId())) {
+                    X509CertificateHolder issuerHolder = new X509CertificateHolder(
+                            keybox.certificates.get(0).getEncoded());
+                    Extension subjectKeyId = issuerHolder.getExtension(Extension.subjectKeyIdentifier);
+                    byte[] issuerKeyId = subjectKeyId != null
+                            ? SubjectKeyIdentifier.getInstance(subjectKeyId.getParsedValue()).getKeyIdentifier()
+                            : MessageDigest.getInstance("SHA-1").digest(
+                                    issuerHolder.getSubjectPublicKeyInfo().getPublicKeyData().getBytes());
+                    builder.addExtension(Extension.authorityKeyIdentifier,
+                            leafHolder.getExtension(Extension.authorityKeyIdentifier).isCritical(),
+                            new AuthorityKeyIdentifier(issuerKeyId));
                 } else {
                     builder.addExtension(leafHolder.getExtension(
                         new ASN1ObjectIdentifier(oidString)));
@@ -222,7 +236,11 @@ public final class CertificateHacker {
             return new ECContentSigner(sigAlgId, keyParam);
         } else if (privateKey instanceof RSAPrivateCrtKey) {
             RSAPrivateCrtKey rsaKey = (RSAPrivateCrtKey) privateKey;
-            RSAKeyParameters keyParam = new RSAKeyParameters(true, rsaKey.getModulus(), rsaKey.getPrivateExponent());
+            RSAKeyParameters keyParam = new RSAPrivateCrtKeyParameters(
+                    rsaKey.getModulus(), rsaKey.getPublicExponent(),
+                    rsaKey.getPrivateExponent(), rsaKey.getPrimeP(),
+                    rsaKey.getPrimeQ(), rsaKey.getPrimeExponentP(),
+                    rsaKey.getPrimeExponentQ(), rsaKey.getCrtCoefficient());
             return new RSAContentSigner(sigAlgId, keyParam);
         }
         
@@ -360,12 +378,12 @@ public final class CertificateHacker {
             String[] packages) throws Exception {
 
         byte[] bootKey = rootOfTrustOctet(originalRootOfTrust, 0);
-        if (bootKey == null) {
+        if (AttestationUtils.isNullOrZeroBootKey(bootKey)) {
             bootKey = AttestationUtils.getBootKey();
         }
 
         byte[] bootHash = rootOfTrustOctet(originalRootOfTrust, 3);
-        if (bootHash == null) {
+        if (AttestationUtils.isNullOrZeroBootHash(bootHash)) {
             bootHash = AttestationUtils.getBootHash();
         }
 

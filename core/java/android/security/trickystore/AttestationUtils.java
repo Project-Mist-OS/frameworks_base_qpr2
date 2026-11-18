@@ -42,6 +42,7 @@ public final class AttestationUtils {
 
     private static volatile byte[] sBootKey;
     private static volatile byte[] sBootHash;
+    private static volatile byte[] sModuleHash;
     private static volatile boolean sTeeBroken = false;
     // True while the cached boot key/hash was derived from the keybox, so it must be
     // re-derived when the keybox changes. Persisted random values are not affected.
@@ -52,20 +53,35 @@ public final class AttestationUtils {
     private AttestationUtils() {}
 
     public static byte[] getModuleHash() {
-        try {
-            byte[] modulesDer = KeyStore2.getInstance()
-                    .getSupplementaryAttestationInfo(Tag.MODULE_HASH);
-            if (modulesDer == null || modulesDer.length == 0) {
-                Log.w(TAG, "MODULE_HASH supplementary data unavailable");
+        byte[] cached = sModuleHash;
+        if (cached != null) {
+            return cached.length == 0 ? null : cached;
+        }
+        synchronized (AttestationUtils.class) {
+            cached = sModuleHash;
+            if (cached != null) {
+                return cached.length == 0 ? null : cached;
+            }
+            try {
+                byte[] modulesDer = KeyStore2.getInstance()
+                        .getSupplementaryAttestationInfo(Tag.MODULE_HASH);
+                if (modulesDer == null || modulesDer.length == 0) {
+                    Log.w(TAG, "MODULE_HASH supplementary data unavailable");
+                    sModuleHash = new byte[0];
+                    return null;
+                }
+                cached = MessageDigest.getInstance("SHA-256").digest(modulesDer);
+                sModuleHash = cached;
+                return cached;
+            } catch (KeyStoreException | java.security.NoSuchAlgorithmException e) {
+                Log.w(TAG, "Unable to calculate MODULE_HASH from Keystore2", e);
+                sModuleHash = new byte[0];
+                return null;
+            } catch (RuntimeException e) {
+                Log.w(TAG, "MODULE_HASH query failed", e);
+                sModuleHash = new byte[0];
                 return null;
             }
-            return MessageDigest.getInstance("SHA-256").digest(modulesDer);
-        } catch (KeyStoreException | java.security.NoSuchAlgorithmException e) {
-            Log.w(TAG, "Unable to calculate MODULE_HASH from Keystore2", e);
-            return null;
-        } catch (RuntimeException e) {
-            Log.w(TAG, "MODULE_HASH query failed", e);
-            return null;
         }
     }
 
@@ -87,19 +103,31 @@ public final class AttestationUtils {
         if (sBootHashFallback) sBootHash = null;
     }
 
+    public static boolean isNullOrZeroBootKey(byte[] key) {
+        if (key == null) return true;
+        for (byte value : key) {
+            if (value != 0) return false;
+        }
+        return true;
+    }
+
+    public static boolean isNullOrZeroBootHash(byte[] hash) {
+        return isNullOrZeroBootKey(hash);
+    }
+
     public static byte[] getBootKey() {
         byte[] key = sBootKey;
-        if (key != null) return key;
+        if (!isNullOrZeroBootKey(key)) return key;
         synchronized (AttestationUtils.class) {
             key = sBootKey;
-            if (key == null) {
+            if (isNullOrZeroBootKey(key)) {
                 key = getBootKeyFromProp();
                 boolean fromKeybox = false;
-                if (key == null) {
+                if (isNullOrZeroBootKey(key)) {
                     key = getBootKeyFromKeybox();
                     fromKeybox = key != null;
                 }
-                if (key == null) key = loadOrCreatePersisted(BOOT_KEY_FILE);
+                if (isNullOrZeroBootKey(key)) key = loadOrCreatePersisted(BOOT_KEY_FILE);
                 sBootKeyFallback = fromKeybox;
                 sBootKey = key;
             }
@@ -186,22 +214,22 @@ public final class AttestationUtils {
 
     public static byte[] getBootHash() {
         byte[] hash = sBootHash;
-        if (hash != null) return hash;
+        if (!isNullOrZeroBootHash(hash)) return hash;
         synchronized (AttestationUtils.class) {
             hash = sBootHash;
-            if (hash == null) {
+            if (isNullOrZeroBootHash(hash)) {
                 hash = getBootHashFromProp();
-                if (hash == null) hash = readPersisted(HBK_FILE);
-                if (hash == null && !sTeeBroken) {
+                if (isNullOrZeroBootHash(hash)) hash = readPersisted(HBK_FILE);
+                if (isNullOrZeroBootHash(hash) && !sTeeBroken) {
                     hash = extractBootHashFromTee();
-                    if (hash != null) writePersisted(HBK_FILE, hash);
+                    if (!isNullOrZeroBootHash(hash)) writePersisted(HBK_FILE, hash);
                 }
                 boolean fromKeybox = false;
-                if (hash == null) {
+                if (isNullOrZeroBootHash(hash)) {
                     hash = deriveBootHashFromKeybox();
                     fromKeybox = hash != null;
                 }
-                if (hash == null) {
+                if (isNullOrZeroBootHash(hash)) {
                     Log.w(TAG, "Failed to get boot hash from prop, disk, TEE, and keybox, using random bytes");
                     hash = generateRandomBytes(32);
                     writePersisted(HBK_FILE, hash);
@@ -222,14 +250,14 @@ public final class AttestationUtils {
             return;
         }
         hash = readPersisted(HBK_FILE);
-        if (hash != null) {
+        if (!isNullOrZeroBootHash(hash)) {
             sBootHash = hash;
             Log.i(TAG, "initBootHash: Boot hash loaded from disk: " + bytesToHex(hash));
             return;
         }
         Log.i(TAG, "initBootHash: No prop or disk state, attempting TEE extraction");
         hash = extractBootHashFromTee();
-        if (hash != null) {
+        if (!isNullOrZeroBootHash(hash)) {
             sBootHashFallback = false;
             sBootHash = hash;
             writePersisted(HBK_FILE, hash);
@@ -338,7 +366,8 @@ public final class AttestationUtils {
             return null;
         }
         try {
-            return hexStringToByteArray(digest);
+            byte[] hash = hexStringToByteArray(digest);
+            return isNullOrZeroBootHash(hash) ? null : hash;
         } catch (Exception e) {
             Log.e(TAG, "Failed to parse vbmeta.digest", e);
             return null;
@@ -364,6 +393,10 @@ public final class AttestationUtils {
         if (halVersion > 0 && sdkVersion >= 100) {
             return Math.min(sdkVersion, halVersion * 100);
         }
+        final int firstApiLevel = SystemProperties.getInt("ro.product.first_api_level", -1);
+        if (firstApiLevel > 0) {
+            return apiLevelToAttestVersion(firstApiLevel);
+        }
         return sdkVersion;
     }
 
@@ -373,29 +406,35 @@ public final class AttestationUtils {
     }
 
     private static int getSdkAttestVersion() {
-        switch (Build.VERSION.SDK_INT) {
-            case Build.VERSION_CODES.Q:
-            case Build.VERSION_CODES.R:
+        return apiLevelToAttestVersion(Build.VERSION.SDK_INT);
+    }
+
+    private static int apiLevelToAttestVersion(int apiLevel) {
+        switch (apiLevel) {
+            case 29:
+            case 30:
                 return 4;
-            case Build.VERSION_CODES.S:
-            case Build.VERSION_CODES.S_V2:
+            case 31:
+            case 32:
                 return 100;
-            case Build.VERSION_CODES.TIRAMISU:
+            case 33:
                 return 200;
-            case Build.VERSION_CODES.UPSIDE_DOWN_CAKE:
-            case Build.VERSION_CODES.VANILLA_ICE_CREAM:
+            case 34:
+            case 35:
                 return 300;
+            case 36:
+                return 400;
             default:
-                return Build.VERSION.SDK_INT >= 37 ? 500 : 400;
+                return apiLevel >= 37 ? 500 : 400;
         }
     }
 
     private static int getKeyMintAidlVersion() {
         int cached = sKeyMintAidlVersion;
-        if (cached > 0) return cached;
+        if (cached != 0) return cached;
         synchronized (AttestationUtils.class) {
             cached = sKeyMintAidlVersion;
-            if (cached > 0) return cached;
+            if (cached != 0) return cached;
 
             int declared = findDeclaredKeyMintVersion();
             if (declared < 1) declared = findVintfKeyMintVersion();
@@ -409,6 +448,7 @@ public final class AttestationUtils {
                         + ", runtime=" + running + ", effective=" + detected);
                 return detected;
             }
+            sKeyMintAidlVersion = -1;
             Log.w(TAG, "KeyMint HAL version unavailable; using Android SDK fallback");
             return -1;
         }
