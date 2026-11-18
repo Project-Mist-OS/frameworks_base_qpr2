@@ -26,8 +26,6 @@ import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
-import android.graphics.ColorMatrix;
-import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -67,6 +65,7 @@ final class MistDropHeadsUpAnimator {
     static final String KEY_OFFSET_Y = "mist_heads_up_drop_offset_y";
     static final String KEY_EXIT = "mist_heads_up_drop_exit";
     static final String KEY_SPEED = "mist_heads_up_drop_speed";
+    static final String KEY_STYLE = "mist_heads_up_drop_style";
     private static final String KEY_DYNAMIC_BAR = "ax_dynamic_bar_enabled";
 
     static final int ORIGIN_AUTO = 0;
@@ -85,6 +84,7 @@ final class MistDropHeadsUpAnimator {
     private static final float A_SQUASH_START = A_IMPACT - 30f;
     private static final float A_BREAK = A_IMPACT + 15f;
     private static final float A_GLASS_IN_END = A_IMPACT + 50f;
+    private static final float A_GLOW_START = A_IMPACT + 40f;
     private static final float A_GLOW_PEAK = A_IMPACT + 110f;
     private static final float A_GLOW_END = A_IMPACT + 300f;
     private static final float A_STATUS_IN_START = A_IMPACT + 80f;
@@ -103,6 +103,21 @@ final class MistDropHeadsUpAnimator {
     private static final float APPEAR_TOTAL = A_IMPACT + 630f;
     private static final float A_SEED_OUT_START = APPEAR_TOTAL - 160f;
 
+    private static final float A_SEED_SPRING = 260f;
+    private static final float A_BULGE_SPRING = 160f;
+    private static final float A_HANG_PERIOD = 90f;
+    private static final float A_HANG_DECAY = 80f;
+    private static final float A_RECOIL_PERIOD = 120f;
+    private static final float A_RECOIL_DECAY = 110f;
+    private static final float A_WIDTH_SPRING = 260f;
+    private static final float A_HEIGHT_SPRING = 340f;
+    private static final float A_JELLY_PERIOD = 170f;
+    private static final float A_JELLY_DECAY = 190f;
+    private static final float A_SURFACE_PERIOD = 220f;
+    private static final float A_SURFACE_DECAY = 170f;
+    private static final float A_SURFACE_LAG = 25f;
+    private static final float A_SAT_ROUND = 45f;
+
     private static final float DISAPPEAR_TOTAL = 460f;
     private static final float D_SHRINK_END = 200f;
     private static final float D_ROW_FADE_START = 40f;
@@ -114,6 +129,19 @@ final class MistDropHeadsUpAnimator {
     private static final float D_NECK_START = 250f;
     private static final float D_RISE_END = 360f;
     private static final float D_SEED_OUT_START = 380f;
+    private static final float D_SHAPE_TIME = 90f;
+    private static final float D_JIGGLE_PERIOD = 100f;
+    private static final float D_JIGGLE_DECAY = 90f;
+    private static final float D_GULP_PERIOD = 110f;
+    private static final float D_GULP_DECAY = 90f;
+
+    static final int STYLE_CLASSIC = 0;
+    static final int STYLE_GLOSSY = 1;
+    static final int STYLE_BLUR = 2;
+
+    static final int DEFAULT_SPEED = 75;
+    private static final int MIN_SPEED = 25;
+    private static final int MAX_SPEED = 200;
 
     private static final int INK_COLOR = Color.BLACK;
 
@@ -130,6 +158,7 @@ final class MistDropHeadsUpAnimator {
     private final float mOffsetY;
     private final boolean mExitEnabled;
     private final float mSpeed;
+    private final int mStyle;
 
     MistDropHeadsUpAnimator(Context context, View host, BooleanSupplier shadeExpanded) {
         mContext = context;
@@ -142,7 +171,10 @@ final class MistDropHeadsUpAnimator {
         mCustomX = MathUtils.constrain(readSecure(cr, KEY_CUSTOM_X, 50), 0, 100);
         mOffsetY = MathUtils.constrain(readSecure(cr, KEY_OFFSET_Y, 0), -20, 40) * mDensity;
         mExitEnabled = readSecure(cr, KEY_EXIT, 1) != 0;
-        mSpeed = MathUtils.constrain(readSecure(cr, KEY_SPEED, 100), 50, 200) / 100f;
+        mSpeed = MathUtils.constrain(readSecure(cr, KEY_SPEED, DEFAULT_SPEED),
+                MIN_SPEED, MAX_SPEED) / 100f;
+        mStyle = MathUtils.constrain(readSecure(cr, KEY_STYLE, STYLE_CLASSIC),
+                STYLE_CLASSIC, STYLE_BLUR);
     }
 
     private static int readSecure(ContentResolver cr, String key, int def) {
@@ -371,7 +403,6 @@ final class MistDropHeadsUpAnimator {
         final RectF rowBounds = new RectF();
         final RectF startBounds = new RectF();
         final RectF blob = new RectF();
-        final ColorMatrix colorMatrix = new ColorMatrix();
         ValueAnimator animator;
         Origin origin;
         Runnable onStart;
@@ -393,7 +424,7 @@ final class MistDropHeadsUpAnimator {
             this.view = view;
             this.root = root;
             this.appear = appear;
-            this.drawable = new DropDrawable(mDensity, isNight());
+            this.drawable = new DropDrawable(mDensity, isNight(), mStyle);
         }
 
         private boolean isNight() {
@@ -421,11 +452,14 @@ final class MistDropHeadsUpAnimator {
             capsuleH = Math.min(rowBounds.height() * 0.5f, dp(24f));
             capsuleW = Math.min(rowBounds.width(),
                     Math.max(capsuleH * 2.4f, rowBounds.width() * 0.34f));
-            if (appear) {
+            if (appear || mStyle == STYLE_BLUR) {
                 try {
                     ViewRootImpl vri = root.getViewRootImpl();
                     if (vri != null) {
-                        drawable.setBlurDrawable(vri.createBackgroundBlurDrawable());
+                        boolean liquidBlur = mStyle == STYLE_BLUR;
+                        drawable.setBlurDrawables(vri.createBackgroundBlurDrawable(),
+                                liquidBlur ? vri.createBackgroundBlurDrawable() : null,
+                                liquidBlur ? vri.createBackgroundBlurDrawable() : null);
                     }
                 } catch (Throwable t) {
                     Log.w(TAG, "no background blur", t);
@@ -479,6 +513,7 @@ final class MistDropHeadsUpAnimator {
             root.getOverlay().remove(drawable);
             view.setAnimationMatrix(null);
             view.setRenderEffect(null);
+            view.setTransitionAlpha(1f);
             if (statusBarTouched) {
                 MistDropStatusBar.setAlpha(1f);
             }
@@ -520,8 +555,8 @@ final class MistDropHeadsUpAnimator {
 
             float swell = progress(t, A_SWELL_START, A_DRIP, Interpolators.FAST_OUT_SLOW_IN)
                     * (1f - progress(t, A_DRIP, A_IMPACT, Interpolators.FAST_OUT_SLOW_IN));
-            float recoil = wobble(t - A_BREAK, 120f, 110f);
-            float grow = o.physical ? 1f : MathUtils.constrain(spring(t, 0.5f, 260f), 0f, 1.3f)
+            float recoil = wobble(t - A_BREAK, A_RECOIL_PERIOD, A_RECOIL_DECAY);
+            float grow = o.physical ? 1f : MathUtils.constrain(spring(t, 0.5f, A_SEED_SPRING), 0f, 1.3f)
                     * (1f - progress(t, A_SEED_OUT_START, APPEAR_TOTAL,
                             Interpolators.FAST_OUT_SLOW_IN));
             d.originScaleX = grow * (1f + 0.10f * swell - 0.06f * recoil);
@@ -534,13 +569,13 @@ final class MistDropHeadsUpAnimator {
 
             if (t < A_IMPACT) {
                 float local = t - A_DRIP;
-                float bulge = MathUtils.constrain(spring(local, 0.45f, 160f), 0f, 1.25f);
+                float bulge = MathUtils.constrain(spring(local, 0.45f, A_BULGE_SPRING), 0f, 1.25f);
                 float rd = dropRadius * bulge;
                 float hangY = o.cy + o.halfH * d.originScaleY + dropRadius * 0.9f;
                 float fall = progress(t, A_BULGE_END, A_IMPACT, Interpolators.FAST_OUT_LINEAR_IN);
                 float cy = MathUtils.lerp(MathUtils.lerp(o.cy, hangY,
                         Math.min(bulge, 1f)), impactCy, fall);
-                float jiggle = 0.18f * wobble(local, 90f, 80f);
+                float jiggle = 0.18f * wobble(local, A_HANG_PERIOD, A_HANG_DECAY);
                 float stretch = 1f + 0.30f * fall + jiggle;
                 float squash = progress(t, A_SQUASH_START, A_IMPACT,
                         Interpolators.FAST_OUT_SLOW_IN);
@@ -562,12 +597,14 @@ final class MistDropHeadsUpAnimator {
             }
 
             float local = t - A_IMPACT;
-            float pw = spring(local, 0.55f, 260f);
-            float ph = spring(local, 0.42f, 340f);
-            float jelly = 0.07f * wobble(local, 170f, 190f);
+            float pw = spring(local, 0.72f, A_WIDTH_SPRING);
+            float ph = spring(local, 0.48f, A_HEIGHT_SPRING);
+            float jelly = 0.045f * wobble(local, A_JELLY_PERIOD, A_JELLY_DECAY);
             float cx = MathUtils.lerp(impactCx, r.centerX(), pw);
             float cy = MathUtils.lerp(impactCy, r.centerY(), ph);
-            float halfW = MathUtils.lerp(capsuleW / 2f, r.width() / 2f, pw) * (1f + jelly);
+            float maxHalfW = Math.min(cx, root.getWidth() - cx) - dp(3f);
+            float halfW = Math.min(MathUtils.lerp(capsuleW / 2f, r.width() / 2f, pw)
+                    * (1f + jelly), Math.max(maxHalfW, r.width() / 2f));
             float halfH = Math.max(dp(1f),
                     MathUtils.lerp(capsuleH / 2f, r.height() / 2f, ph) * (1f - jelly));
             blob.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
@@ -576,8 +613,8 @@ final class MistDropHeadsUpAnimator {
                     Interpolators.FAST_OUT_SLOW_IN);
             float radius = MathUtils.lerp(halfH, Math.min(rowRadius, halfH), radiusMix);
             float liquid = 1f - radiusMix;
-            float bulgeTop = 2f * halfH * 0.09f * wobble(local, 220f, 170f) * liquid;
-            float bulgeBottom = 2f * halfH * 0.12f * wobble(local - 25f, 220f, 170f) * liquid;
+            float bulgeTop = 2f * halfH * 0.09f * wobble(local, A_SURFACE_PERIOD, A_SURFACE_DECAY) * liquid;
+            float bulgeBottom = 2f * halfH * 0.12f * wobble(local - A_SURFACE_LAG, A_SURFACE_PERIOD, A_SURFACE_DECAY) * liquid;
             d.setShape(blob, radius, bulgeTop, bulgeBottom, 0f);
             d.tip = capsuleH * 0.9f * bell(t, A_TIP_START, A_TIP_END);
 
@@ -587,7 +624,7 @@ final class MistDropHeadsUpAnimator {
             d.inkAlpha = 1f - glassIn;
             d.glassAlpha = glassIn * glassOut;
             d.rimAlpha = glassIn * glassOut;
-            d.glowAlpha = progress(t, A_IMPACT + 40f, A_GLOW_PEAK,
+            d.glowAlpha = progress(t, A_GLOW_START, A_GLOW_PEAK,
                     Interpolators.FAST_OUT_SLOW_IN)
                     * (1f - progress(t, A_GLOW_PEAK, A_GLOW_END, Interpolators.FAST_OUT_SLOW_IN));
 
@@ -612,7 +649,7 @@ final class MistDropHeadsUpAnimator {
                 if (s < 1f) {
                     float move = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(s);
                     float size = satR * (1f - Interpolators.FAST_OUT_LINEAR_IN.getInterpolation(s));
-                    float elongate = 1f - progress(t, A_BREAK, A_BREAK + 45f,
+                    float elongate = 1f - progress(t, A_BREAK, A_BREAK + A_SAT_ROUND,
                             Interpolators.FAST_OUT_SLOW_IN);
                     d.setSatellite(MathUtils.lerp(satX, o.cx, move),
                             MathUtils.lerp(satY, o.cy + o.halfH * 0.3f, move),
@@ -637,7 +674,7 @@ final class MistDropHeadsUpAnimator {
             float seedOut = progress(t, D_SEED_OUT_START, DISAPPEAR_TOTAL,
                     Interpolators.FAST_OUT_SLOW_IN);
             float grow = o.physical ? 1f : seedIn * (1f - seedOut);
-            float gulp = wobble(t - D_RISE_END, 110f, 90f);
+            float gulp = wobble(t - D_RISE_END, D_GULP_PERIOD, D_GULP_DECAY);
             d.originScaleX = grow * (1f + 0.08f * gulp);
             d.originScaleY = grow * (1f + 0.14f * gulp);
 
@@ -670,8 +707,8 @@ final class MistDropHeadsUpAnimator {
             float cy = MathUtils.lerp(MathUtils.lerp(startCy, hangY, rise), o.cy, absorb);
             float cx = MathUtils.lerp(impactX(s), o.cx, rise);
             float shape = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
-                    progress(t, D_SHRINK_END, D_SHRINK_END + 90f));
-            float jiggle = 0.16f * wobble(t - D_SHRINK_END, 100f, 90f);
+                    progress(t, D_SHRINK_END, D_SHRINK_END + D_SHAPE_TIME));
+            float jiggle = 0.16f * wobble(t - D_SHRINK_END, D_JIGGLE_PERIOD, D_JIGGLE_DECAY);
             float halfW = MathUtils.lerp(capsuleW / 2f, dropRadius * 0.92f, shape)
                     * (1f - jiggle) * (1f - absorb);
             float halfH = MathUtils.lerp(capsuleH / 2f, dropRadius * 1.15f, shape)
@@ -706,14 +743,10 @@ final class MistDropHeadsUpAnimator {
             matrix.setScale(target.width() / r.width(), target.height() / r.height());
             matrix.postTranslate(target.left - r.left, target.top - r.top);
             view.setAnimationMatrix(matrix);
-            colorMatrix.setScale(1f, 1f, 1f, MathUtils.constrain(alpha, 0f, 1f));
-            RenderEffect effect = RenderEffect.createColorFilterEffect(
-                    new ColorMatrixColorFilter(colorMatrix));
-            if (blur > 0.5f) {
-                effect = RenderEffect.createChainEffect(effect,
-                        RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.DECAL));
-            }
-            view.setRenderEffect(effect);
+            view.setTransitionAlpha(MathUtils.constrain(alpha, 0f, 1f));
+            view.setRenderEffect(blur > 0.5f
+                    ? RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.DECAL)
+                    : null);
         }
 
         private boolean computeRowBounds(RectF out) {
@@ -747,15 +780,25 @@ final class MistDropHeadsUpAnimator {
         private final Paint mRim = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint mGlow = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint mRipple = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mGloss = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint mShine = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path mNeck = new Path();
         private final Path mShape = new Path();
+        private final Path mUnion = new Path();
+        private final Path mPart = new Path();
         private final RectF mTmp = new RectF();
+        private final RectF mOriginRect = new RectF();
         private final Rect mTmpInt = new Rect();
         private final float mDensity;
+        private final int mStyle;
         private final int mGlassColor;
         private final int mGlassBlurColor;
         private final float mGlassBlurRadius;
+        private final float mLiquidBlurRadius;
+        private final float mGlossAlpha;
         private BackgroundBlurDrawable mBlur;
+        private BackgroundBlurDrawable mOriginBlur;
+        private BackgroundBlurDrawable mSatBlur;
 
         final RectF shape = new RectF();
         Origin origin;
@@ -780,15 +823,23 @@ final class MistDropHeadsUpAnimator {
         float satRx;
         float satRy;
 
-        DropDrawable(float density, boolean night) {
+        DropDrawable(float density, boolean night, int style) {
             mDensity = density;
+            mStyle = style;
             mInk.setStyle(Paint.Style.FILL);
-            mInk.setColor(INK_COLOR);
+            if (style == STYLE_BLUR) {
+                mInk.setColor(night ? Color.argb(90, 255, 255, 255)
+                        : Color.argb(80, 24, 26, 34));
+            } else {
+                mInk.setColor(INK_COLOR);
+            }
             mFill.setStyle(Paint.Style.FILL);
             mGlass.setStyle(Paint.Style.FILL);
             mGlassColor = night ? Color.argb(92, 255, 255, 255) : Color.argb(190, 255, 255, 255);
             mGlassBlurColor = night ? Color.argb(40, 255, 255, 255) : Color.argb(70, 255, 255, 255);
             mGlassBlurRadius = 30f * density;
+            mLiquidBlurRadius = 18f * density;
+            mGlossAlpha = style == STYLE_BLUR ? 0.75f : 0.6f;
             mRim.setStyle(Paint.Style.STROKE);
             mRim.setStrokeWidth(1.6f * density);
             mRim.setColor(Color.WHITE);
@@ -798,23 +849,42 @@ final class MistDropHeadsUpAnimator {
             mRipple.setStyle(Paint.Style.STROKE);
             mRipple.setStrokeWidth(1.2f * density);
             mRipple.setColor(Color.WHITE);
+            mGloss.setStyle(Paint.Style.STROKE);
+            mGloss.setStrokeWidth(1.3f * density);
+            mGloss.setColor(Color.WHITE);
+            mShine.setStyle(Paint.Style.FILL);
+            mShine.setColor(Color.WHITE);
+            mShine.setMaskFilter(new BlurMaskFilter(1.5f * density, BlurMaskFilter.Blur.NORMAL));
         }
 
-        void setBlurDrawable(BackgroundBlurDrawable blur) {
-            mBlur = blur;
-            if (mBlur != null) {
-                mBlur.setXfermode(null);
-                mBlur.setBlurRadius(0);
-                mBlur.setColor(Color.TRANSPARENT);
-            }
+        private static void prepareBlur(BackgroundBlurDrawable blur) {
+            if (blur == null) return;
+            blur.setXfermode(null);
+            blur.setBlurRadius(0);
+            blur.setColor(Color.TRANSPARENT);
+        }
+
+        private static void clearBlur(BackgroundBlurDrawable blur) {
+            if (blur == null) return;
+            blur.setBlurRadius(0);
+            blur.setColor(Color.TRANSPARENT);
+            blur.setVisible(false, false);
+        }
+
+        void setBlurDrawables(BackgroundBlurDrawable shapeBlur, BackgroundBlurDrawable originBlur,
+                BackgroundBlurDrawable satBlur) {
+            mBlur = shapeBlur;
+            mOriginBlur = originBlur;
+            mSatBlur = satBlur;
+            prepareBlur(mBlur);
+            prepareBlur(mOriginBlur);
+            prepareBlur(mSatBlur);
         }
 
         void release() {
-            if (mBlur != null) {
-                mBlur.setBlurRadius(0);
-                mBlur.setColor(Color.TRANSPARENT);
-                mBlur.setVisible(false, false);
-            }
+            clearBlur(mBlur);
+            clearBlur(mOriginBlur);
+            clearBlur(mSatBlur);
         }
 
         void reset() {
@@ -916,6 +986,35 @@ final class MistDropHeadsUpAnimator {
             return Math.round(255f * MathUtils.constrain(a, 0f, 1f));
         }
 
+        private void updateBlur(BackgroundBlurDrawable blur, RectF bounds, float corner,
+                float blurRadius, int color, Canvas canvas) {
+            if (blur == null) return;
+            if (bounds != null && blurRadius >= 1f) {
+                bounds.round(mTmpInt);
+                blur.setBounds(mTmpInt);
+                blur.setCornerRadius(corner);
+                blur.setBlurRadius(Math.round(blurRadius));
+                blur.setColor(color);
+            } else {
+                blur.setBlurRadius(0);
+                blur.setColor(Color.TRANSPARENT);
+            }
+            blur.draw(canvas);
+        }
+
+        private void drawShine(Canvas canvas, RectF body, float strength) {
+            if (strength <= 0.01f || body.isEmpty()) return;
+            float w = body.width();
+            float h = body.height();
+            float ry = Math.max(h * 0.14f, 0.6f * mDensity);
+            float rx = Math.max(Math.min(w * 0.16f, h * 0.38f), ry);
+            float cx = body.left + Math.min(w * 0.3f, h * 0.55f);
+            float cy = body.top + h * 0.3f;
+            mTmp.set(cx - rx, cy - ry, cx + rx, cy + ry);
+            mShine.setAlpha(alpha(0.8f * strength));
+            canvas.drawOval(mTmp, mShine);
+        }
+
         @Override
         public void draw(Canvas canvas) {
             Origin o = origin;
@@ -923,33 +1022,46 @@ final class MistDropHeadsUpAnimator {
 
             boolean hasShape = !shape.isEmpty();
             if (hasShape) buildShape();
+            boolean liquid = mStyle != STYLE_CLASSIC;
+            boolean blurStyle = mStyle == STYLE_BLUR;
+
+            boolean originVisible = originScaleX > 0.01f && originScaleY > 0.01f;
+            float originCorner = 0f;
+            if (originVisible) {
+                float hw = o.halfW * originScaleX;
+                float hh = o.halfH * originScaleY;
+                mOriginRect.set(o.cx - hw, o.cy - hh, o.cx + hw, o.cy + hh);
+                originCorner = Math.min(hw, hh);
+            }
+            boolean originMoving = !o.physical || neckVisible
+                    || Math.abs(originScaleX - 1f) > 0.005f
+                    || Math.abs(originScaleY - 1f) > 0.005f;
 
             if (hasShape && glowAlpha > 0.003f) {
                 mGlow.setAlpha(alpha(glowAlpha * 0.55f));
                 canvas.drawPath(mShape, mGlow);
             }
 
-            if (mBlur != null) {
-                if (hasShape && glassAlpha > 0.003f) {
-                    shape.round(mTmpInt);
-                    mBlur.setBounds(mTmpInt);
-                    mBlur.setCornerRadius(Math.min(radius, shape.height() / 2f));
-                    mBlur.setBlurRadius(Math.round(mGlassBlurRadius * glassAlpha));
-                    mBlur.setColor(Color.argb(Math.round(Color.alpha(mGlassBlurColor)
-                            * glassAlpha), 255, 255, 255));
-                } else {
-                    mBlur.setBlurRadius(0);
-                    mBlur.setColor(Color.TRANSPARENT);
+            float shapeCorner = hasShape
+                    ? Math.min(radius, Math.min(shape.height(), shape.width()) / 2f) : 0f;
+            float liquidShape = blurStyle && hasShape ? inkAlpha : 0f;
+            float shapeBlur = Math.max(mGlassBlurRadius * glassAlpha,
+                    mLiquidBlurRadius * liquidShape);
+            int shapeTint = Color.argb(Math.round(Color.alpha(mGlassBlurColor) * glassAlpha),
+                    255, 255, 255);
+            updateBlur(mBlur, hasShape ? shape : null, shapeCorner, shapeBlur, shapeTint, canvas);
+            if (blurStyle) {
+                updateBlur(mOriginBlur, originVisible && originMoving ? mOriginRect : null,
+                        originCorner, mLiquidBlurRadius, Color.TRANSPARENT, canvas);
+                if (satVisible) {
+                    mTmp.set(satX - satRx, satY - satRy, satX + satRx, satY + satRy);
                 }
-                mBlur.draw(canvas);
+                updateBlur(mSatBlur, satVisible ? mTmp : null, Math.min(satRx, satRy),
+                        mLiquidBlurRadius * 0.6f, Color.TRANSPARENT, canvas);
             }
 
-            if (originScaleX > 0.01f && originScaleY > 0.01f) {
-                float hw = o.halfW * originScaleX;
-                float hh = o.halfH * originScaleY;
-                mTmp.set(o.cx - hw, o.cy - hh, o.cx + hw, o.cy + hh);
-                float corner = Math.min(hw, hh);
-                canvas.drawRoundRect(mTmp, corner, corner, mInk);
+            if (originVisible && (!blurStyle || originMoving)) {
+                canvas.drawRoundRect(mOriginRect, originCorner, originCorner, mInk);
             }
             if (neckVisible) {
                 canvas.drawPath(mNeck, mInk);
@@ -958,12 +1070,50 @@ final class MistDropHeadsUpAnimator {
                 mTmp.set(satX - satRx, satY - satRy, satX + satRx, satY + satRy);
                 canvas.drawOval(mTmp, mInk);
             }
-
             if (hasShape && inkAlpha > 0.003f) {
-                mInk.setAlpha(alpha(inkAlpha));
+                int base = mInk.getAlpha();
+                mInk.setAlpha(Math.round(base * MathUtils.constrain(inkAlpha, 0f, 1f)));
                 canvas.drawPath(mShape, mInk);
-                mInk.setAlpha(255);
+                mInk.setAlpha(base);
             }
+
+            if (liquid) {
+                mUnion.rewind();
+                if (originVisible && originMoving) {
+                    mPart.rewind();
+                    mPart.addRoundRect(mOriginRect, originCorner, originCorner,
+                            Path.Direction.CW);
+                    mUnion.op(mPart, Path.Op.UNION);
+                }
+                if (neckVisible) {
+                    mUnion.op(mNeck, Path.Op.UNION);
+                }
+                boolean shapeIsLiquid = hasShape && inkAlpha > 0.3f;
+                if (shapeIsLiquid) {
+                    mUnion.op(mShape, Path.Op.UNION);
+                }
+                if (satVisible) {
+                    mPart.rewind();
+                    mPart.addOval(satX - satRx, satY - satRy, satX + satRx, satY + satRy,
+                            Path.Direction.CW);
+                    mUnion.op(mPart, Path.Op.UNION);
+                }
+                if (!mUnion.isEmpty()) {
+                    mGloss.setAlpha(alpha(mGlossAlpha));
+                    canvas.drawPath(mUnion, mGloss);
+                }
+                if (shapeIsLiquid) {
+                    drawShine(canvas, shape, inkAlpha);
+                }
+                if (originVisible && originMoving) {
+                    drawShine(canvas, mOriginRect, 0.8f);
+                }
+                if (satVisible) {
+                    mTmp.set(satX - satRx, satY - satRy, satX + satRx, satY + satRy);
+                    drawShine(canvas, mTmp, 0.7f);
+                }
+            }
+
             if (hasShape && fillAlpha > 0.003f) {
                 mFill.setColor(fillColor);
                 mFill.setAlpha(alpha(fillAlpha));
