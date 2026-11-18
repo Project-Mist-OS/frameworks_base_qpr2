@@ -97,7 +97,7 @@ final class MistDropHeadsUpAnimator {
     private static final float A_RADIUS_START = A_IMPACT + 250f;
     private static final float A_RADIUS_END = A_IMPACT + 420f;
     private static final float A_TIP_START = A_IMPACT - 10f;
-    private static final float A_TIP_END = A_IMPACT + 70f;
+    private static final float A_TIP_END = A_IMPACT + 45f;
     private static final float A_RIPPLE_END = A_IMPACT + 180f;
     private static final float A_SATELLITE_END = A_BREAK + 560f;
     private static final float APPEAR_TOTAL = A_IMPACT + 630f;
@@ -591,7 +591,7 @@ final class MistDropHeadsUpAnimator {
                 d.setNeck(o.cx, o.cy, o.neckWidth() * Math.max(d.originScaleX, 0.35f),
                         bx, cy, Math.min(2f * halfH, 2f * halfW) * 0.8f,
                         Math.max(waist, dp(0.8f)));
-                d.tip = capsuleH * 0.9f * bell(t, A_TIP_START, A_TIP_END);
+                d.tip = capsuleH * 0.45f * bell(t, A_TIP_START, A_TIP_END);
                 hideRow();
                 return;
             }
@@ -616,7 +616,7 @@ final class MistDropHeadsUpAnimator {
             float bulgeTop = 2f * halfH * 0.09f * wobble(local, A_SURFACE_PERIOD, A_SURFACE_DECAY) * liquid;
             float bulgeBottom = 2f * halfH * 0.12f * wobble(local - A_SURFACE_LAG, A_SURFACE_PERIOD, A_SURFACE_DECAY) * liquid;
             d.setShape(blob, radius, bulgeTop, bulgeBottom, 0f);
-            d.tip = capsuleH * 0.9f * bell(t, A_TIP_START, A_TIP_END);
+            d.tip = capsuleH * 0.45f * bell(t, A_TIP_START, A_TIP_END);
 
             float glassIn = progress(t, A_IMPACT, A_GLASS_IN_END, Interpolators.FAST_OUT_SLOW_IN);
             float glassOut = 1f - progress(t, A_GLASS_OUT_START, A_GLASS_OUT_END,
@@ -958,10 +958,10 @@ final class MistDropHeadsUpAnimator {
             mShape.cubicTo(l + rr + span / 3f, t - bulgeTop * c,
                     ri - rr - span / 3f, t - bulgeTop * c, ri - rr, t);
             if (tip > 0.5f) {
-                mShape.cubicTo(ri - rr + rr * K, t, ri + tip * 0.35f, cy - rr * 0.45f,
-                        ri + tip, cy);
-                mShape.cubicTo(ri + tip * 0.35f, cy + rr * 0.45f, ri - rr + rr * K, b,
-                        ri - rr, b);
+                float rx = rr + tip;
+                float hh = h / 2f;
+                mShape.cubicTo(ri - rr + rx * K, t, ri + tip, cy - hh * K, ri + tip, cy);
+                mShape.cubicTo(ri + tip, cy + hh * K, ri - rr + rx * K, b, ri - rr, b);
             } else {
                 mShape.cubicTo(ri - rr + rr * K, t, ri, t + rr - rr * K, ri, t + rr);
                 mShape.lineTo(ri, b - rr);
@@ -970,10 +970,10 @@ final class MistDropHeadsUpAnimator {
             mShape.cubicTo(ri - rr - span / 3f, b + bulgeBottom * c,
                     l + rr + span / 3f, b + bulgeBottom * c, l + rr, b);
             if (tip > 0.5f) {
-                mShape.cubicTo(l + rr - rr * K, b, l - tip * 0.35f, cy + rr * 0.45f,
-                        l - tip, cy);
-                mShape.cubicTo(l - tip * 0.35f, cy - rr * 0.45f, l + rr - rr * K, t,
-                        l + rr, t);
+                float rx = rr + tip;
+                float hh = h / 2f;
+                mShape.cubicTo(l + rr - rx * K, b, l - tip, cy + hh * K, l - tip, cy);
+                mShape.cubicTo(l - tip, cy - hh * K, l + rr - rx * K, t, l + rr, t);
             } else {
                 mShape.cubicTo(l + rr - rr * K, b, l, b - rr + rr * K, l, b - rr);
                 mShape.lineTo(l, t + rr);
