@@ -22,6 +22,7 @@ import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.content.ContentResolver;
 import android.content.Context;
+import android.database.ContentObserver;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -152,20 +153,70 @@ final class MistDropHeadsUpAnimator {
     private final ArrayMap<View, Run> mRuns = new ArrayMap<>();
     private final ArgbEvaluator mArgb = new ArgbEvaluator();
 
-    private final boolean mEnabled;
-    private final int mOrigin;
-    private final int mCustomX;
-    private final float mOffsetY;
-    private final boolean mExitEnabled;
-    private final float mSpeed;
-    private final int mStyle;
+    private static final String[] KEYS = {
+            KEY_ENABLED, KEY_ORIGIN, KEY_CUSTOM_X, KEY_OFFSET_Y, KEY_EXIT, KEY_SPEED, KEY_STYLE
+    };
+
+    private boolean mEnabled;
+    private int mOrigin;
+    private int mCustomX;
+    private float mOffsetY;
+    private boolean mExitEnabled;
+    private float mSpeed;
+    private int mStyle;
+
+    private final ContentObserver mSettingsObserver;
+    private boolean mObserving;
 
     MistDropHeadsUpAnimator(Context context, View host, BooleanSupplier shadeExpanded) {
         mContext = context;
         mHost = host;
         mShadeExpanded = shadeExpanded;
         mDensity = context.getResources().getDisplayMetrics().density;
-        ContentResolver cr = context.getContentResolver();
+        mSettingsObserver = new ContentObserver(context.getMainThreadHandler()) {
+            @Override
+            public void onChange(boolean selfChange) {
+                loadSettings();
+            }
+        };
+        loadSettings();
+        if (host != null) {
+            host.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override
+                public void onViewAttachedToWindow(View v) {
+                    startObserving();
+                }
+
+                @Override
+                public void onViewDetachedFromWindow(View v) {
+                    stopObserving();
+                }
+            });
+            if (host.isAttachedToWindow()) {
+                startObserving();
+            }
+        }
+    }
+
+    private void startObserving() {
+        if (mObserving) return;
+        ContentResolver cr = mContext.getContentResolver();
+        for (String key : KEYS) {
+            cr.registerContentObserver(Settings.Secure.getUriFor(key), false,
+                    mSettingsObserver, UserHandle.USER_ALL);
+        }
+        mObserving = true;
+        loadSettings();
+    }
+
+    private void stopObserving() {
+        if (!mObserving) return;
+        mContext.getContentResolver().unregisterContentObserver(mSettingsObserver);
+        mObserving = false;
+    }
+
+    private void loadSettings() {
+        ContentResolver cr = mContext.getContentResolver();
         mEnabled = readSecure(cr, KEY_ENABLED, 0) != 0;
         mOrigin = readSecure(cr, KEY_ORIGIN, ORIGIN_AUTO);
         mCustomX = MathUtils.constrain(readSecure(cr, KEY_CUSTOM_X, 50), 0, 100);
@@ -398,6 +449,7 @@ final class MistDropHeadsUpAnimator {
         final ExpandableView view;
         final View root;
         final boolean appear;
+        final int style;
         final DropDrawable drawable;
         final Matrix matrix = new Matrix();
         final RectF rowBounds = new RectF();
@@ -424,7 +476,8 @@ final class MistDropHeadsUpAnimator {
             this.view = view;
             this.root = root;
             this.appear = appear;
-            this.drawable = new DropDrawable(mDensity, isNight(), mStyle);
+            this.style = mStyle;
+            this.drawable = new DropDrawable(mDensity, isNight(), style);
         }
 
         private boolean isNight() {
@@ -452,11 +505,11 @@ final class MistDropHeadsUpAnimator {
             capsuleH = Math.min(rowBounds.height() * 0.5f, dp(24f));
             capsuleW = Math.min(rowBounds.width(),
                     Math.max(capsuleH * 2.4f, rowBounds.width() * 0.34f));
-            if (appear || mStyle == STYLE_BLUR) {
+            if (appear || style == STYLE_BLUR) {
                 try {
                     ViewRootImpl vri = root.getViewRootImpl();
                     if (vri != null) {
-                        boolean liquidBlur = mStyle == STYLE_BLUR;
+                        boolean liquidBlur = style == STYLE_BLUR;
                         drawable.setBlurDrawables(vri.createBackgroundBlurDrawable(),
                                 liquidBlur ? vri.createBackgroundBlurDrawable() : null,
                                 liquidBlur ? vri.createBackgroundBlurDrawable() : null);
@@ -621,7 +674,7 @@ final class MistDropHeadsUpAnimator {
             float glassIn = progress(t, A_IMPACT, A_GLASS_IN_END, Interpolators.FAST_OUT_SLOW_IN);
             float glassOut = 1f - progress(t, A_GLASS_OUT_START, A_GLASS_OUT_END,
                     Interpolators.FAST_OUT_SLOW_IN);
-            if (mStyle == STYLE_GLOSSY) {
+            if (style == STYLE_GLOSSY) {
                 d.inkAlpha = glassOut;
                 d.shineSweep = progress(t, A_IMPACT, A_GLASS_OUT_START,
                         Interpolators.FAST_OUT_SLOW_IN);
@@ -630,7 +683,7 @@ final class MistDropHeadsUpAnimator {
                 d.glassAlpha = glassIn * glassOut;
                 d.rimAlpha = glassIn * glassOut;
             }
-            if (mStyle == STYLE_CLASSIC) {
+            if (style == STYLE_CLASSIC) {
                 d.glowAlpha = progress(t, A_GLOW_START, A_GLOW_PEAK,
                         Interpolators.FAST_OUT_SLOW_IN)
                         * (1f - progress(t, A_GLOW_PEAK, A_GLOW_END,
