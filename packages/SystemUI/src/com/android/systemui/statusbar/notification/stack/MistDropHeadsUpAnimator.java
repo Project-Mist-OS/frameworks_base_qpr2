@@ -94,6 +94,8 @@ final class MistDropHeadsUpAnimator {
     private static final float A_REVEAL_ALPHA_END = A_IMPACT + 260f;
     private static final float A_REVEAL_BLUR_END = A_IMPACT + 330f;
     private static final float A_GLASS_OUT_START = A_IMPACT + 200f;
+    private static final float A_GLOSS_OUT_START = A_IMPACT + 60f;
+    private static final float A_GLOSS_OUT_END = A_IMPACT + 230f;
     private static final float A_GLASS_OUT_END = A_IMPACT + 360f;
     private static final float A_RADIUS_START = A_IMPACT + 250f;
     private static final float A_RADIUS_END = A_IMPACT + 420f;
@@ -119,20 +121,22 @@ final class MistDropHeadsUpAnimator {
     private static final float A_SURFACE_LAG = 25f;
     private static final float A_SAT_ROUND = 45f;
 
-    private static final float DISAPPEAR_TOTAL = 460f;
-    private static final float D_SHRINK_END = 200f;
+    private static final float DISAPPEAR_TOTAL = 520f;
+    private static final float D_SHRINK_END = 220f;
     private static final float D_ROW_FADE_START = 40f;
-    private static final float D_ROW_FADE_END = 180f;
+    private static final float D_ROW_FADE_END = 190f;
     private static final float D_BLOB_IN_END = 90f;
     private static final float D_COLOR_START = 60f;
-    private static final float D_SEED_IN_START = 120f;
-    private static final float D_SEED_IN_END = 240f;
-    private static final float D_NECK_START = 250f;
-    private static final float D_RISE_END = 360f;
-    private static final float D_SEED_OUT_START = 380f;
-    private static final float D_SHAPE_TIME = 90f;
-    private static final float D_JIGGLE_PERIOD = 100f;
-    private static final float D_JIGGLE_DECAY = 90f;
+    private static final float D_SEED_IN_START = 40f;
+    private static final float D_SEED_IN_END = 180f;
+    private static final float D_NECK_START = 150f;
+    private static final float D_NECK_FULL = 260f;
+    private static final float D_DROP_START = 180f;
+    private static final float D_RISE_START = 200f;
+    private static final float D_ABSORB_START = 400f;
+    private static final float D_SEED_OUT_START = 450f;
+    private static final float D_JIGGLE_PERIOD = 110f;
+    private static final float D_JIGGLE_DECAY = 100f;
     private static final float D_GULP_PERIOD = 110f;
     private static final float D_GULP_DECAY = 90f;
 
@@ -283,7 +287,8 @@ final class MistDropHeadsUpAnimator {
         }
     }
 
-    void startAppear(ExpandableView view, Runnable onEnd) {
+    void startAppear(ExpandableView view, Runnable onEnd,
+            AnimatorListenerAdapter globalListener) {
         finish(view);
         View root = mHost.getRootView();
         Run run = new Run(view, root, true);
@@ -292,7 +297,7 @@ final class MistDropHeadsUpAnimator {
             return;
         }
         run.onEnd = onEnd;
-        run.start(Math.round(APPEAR_TOTAL / mSpeed), null);
+        run.start(Math.round(APPEAR_TOTAL / mSpeed), globalListener);
     }
 
     void startDisappear(ExpandableView view, Runnable onStart, Runnable onEnd,
@@ -362,7 +367,19 @@ final class MistDropHeadsUpAnimator {
         Rect top = cutout.getBoundingRectTop();
         if (top == null || top.isEmpty()) return null;
         if (top.height() > root.getHeight() / 4 || top.width() > root.getWidth() / 2) return null;
-        return new RectF(top);
+        RectF hole = new RectF(top);
+        try {
+            Path path = cutout.getCutoutPath();
+            if (path != null) {
+                RectF bounds = new RectF();
+                path.computeBounds(bounds, true);
+                if (!bounds.isEmpty() && bounds.intersect(hole)) {
+                    hole.set(bounds);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return hole;
     }
 
     private static final class Origin {
@@ -395,7 +412,7 @@ final class MistDropHeadsUpAnimator {
         if (mode == ORIGIN_CUTOUT && cutout == null) {
             mode = ORIGIN_CENTER;
         }
-        float seedRadius = dp(7f);
+        float seedRadius = dp(5f);
         switch (mode) {
             case ORIGIN_CUTOUT: {
                 float r = Math.min(cutout.width(), cutout.height()) / 2f;
@@ -501,7 +518,8 @@ final class MistDropHeadsUpAnimator {
             }
             bgColor = Color.alpha(tint) == 0 ? Color.DKGRAY : (tint | 0xFF000000);
             rowRadius = Math.min(view.getTopCornerRadius(), rowBounds.height() / 2f);
-            dropRadius = Math.max(Math.min(origin.halfW, origin.halfH) * 1.05f, dp(7f));
+            dropRadius = MathUtils.constrain(Math.min(origin.halfW, origin.halfH) * 0.9f,
+                    dp(4.5f), dp(8f));
             capsuleH = Math.min(rowBounds.height() * 0.5f, dp(24f));
             capsuleW = Math.min(rowBounds.width(),
                     Math.max(capsuleH * 2.4f, rowBounds.width() * 0.34f));
@@ -567,6 +585,9 @@ final class MistDropHeadsUpAnimator {
             view.setAnimationMatrix(null);
             view.setRenderEffect(null);
             view.setTransitionAlpha(1f);
+            if (appear && view instanceof ExpandableNotificationRow) {
+                ((ExpandableNotificationRow) view).updateBackgroundColorsOfSelf();
+            }
             if (statusBarTouched) {
                 MistDropStatusBar.setAlpha(1f);
             }
@@ -675,8 +696,9 @@ final class MistDropHeadsUpAnimator {
             float glassOut = 1f - progress(t, A_GLASS_OUT_START, A_GLASS_OUT_END,
                     Interpolators.FAST_OUT_SLOW_IN);
             if (style == STYLE_GLOSSY) {
-                d.inkAlpha = glassOut;
-                d.shineSweep = progress(t, A_IMPACT, A_GLASS_OUT_START,
+                d.inkAlpha = 1f - progress(t, A_GLOSS_OUT_START, A_GLOSS_OUT_END,
+                        Interpolators.FAST_OUT_SLOW_IN);
+                d.shineSweep = progress(t, A_IMPACT, A_GLOSS_OUT_END,
                         Interpolators.FAST_OUT_SLOW_IN);
             } else {
                 d.inkAlpha = 1f - glassIn;
@@ -736,19 +758,37 @@ final class MistDropHeadsUpAnimator {
             float seedOut = progress(t, D_SEED_OUT_START, DISAPPEAR_TOTAL,
                     Interpolators.FAST_OUT_SLOW_IN);
             float grow = o.physical ? 1f : seedIn * (1f - seedOut);
-            float gulp = wobble(t - D_RISE_END, D_GULP_PERIOD, D_GULP_DECAY);
+            float gulp = wobble(t - D_ABSORB_START, D_GULP_PERIOD, D_GULP_DECAY);
             d.originScaleX = grow * (1f + 0.08f * gulp);
             d.originScaleY = grow * (1f + 0.14f * gulp);
 
+            float q = progress(t, 0f, D_SHRINK_END, Interpolators.FAST_OUT_SLOW_IN);
+            float toDrop = progress(t, D_DROP_START, D_ABSORB_START,
+                    Interpolators.FAST_OUT_SLOW_IN);
+            float rise = progress(t, D_RISE_START, D_ABSORB_START,
+                    Interpolators.FAST_OUT_SLOW_IN);
+            float absorb = progress(t, D_ABSORB_START, DISAPPEAR_TOTAL,
+                    Interpolators.FAST_OUT_LINEAR_IN);
+            float hangY = o.cy + o.halfH + dropRadius * 0.9f;
+            float pillCy = s.top + capsuleH / 2f;
+            float cy = MathUtils.lerp(MathUtils.lerp(MathUtils.lerp(s.centerY(), pillCy, q),
+                    hangY, rise), o.cy, absorb);
+            float cx = MathUtils.lerp(MathUtils.lerp(s.centerX(), impactX(s), q), o.cx, rise);
+            float jiggle = 0.12f * wobble(t - D_DROP_START, D_JIGGLE_PERIOD, D_JIGGLE_DECAY);
+            float halfW = MathUtils.lerp(MathUtils.lerp(s.width() / 2f, capsuleW / 2f, q),
+                    dropRadius * 0.92f, toDrop) * (1f - jiggle) * (1f - absorb);
+            float halfH = MathUtils.lerp(MathUtils.lerp(s.height() / 2f, capsuleH / 2f, q),
+                    dropRadius * 1.1f, toDrop) * (1f + jiggle) * (1f - absorb);
+            if (halfW <= 0.5f || halfH <= 0.5f) {
+                hideRow();
+                return;
+            }
+            blob.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+            float radius = MathUtils.lerp(Math.min(rowRadius, halfH), halfH,
+                    progress(t, 0f, D_SHRINK_END * 0.6f));
+            d.setShape(blob, Math.min(radius, Math.min(halfW, halfH)), 0f, 0f, 0f);
+
             if (t < D_SHRINK_END) {
-                float q = progress(t, 0f, D_SHRINK_END, Interpolators.FAST_OUT_SLOW_IN);
-                float cx = MathUtils.lerp(s.centerX(), impactX(s), q);
-                float halfW = MathUtils.lerp(s.width() / 2f, capsuleW / 2f, q);
-                float bottom = MathUtils.lerp(s.bottom, s.top + capsuleH, q);
-                blob.set(cx - halfW, s.top, cx + halfW, bottom);
-                float radius = MathUtils.lerp(Math.min(rowRadius, blob.height() / 2f),
-                        blob.height() / 2f, q);
-                d.setShape(blob, radius, 0f, 0f, 0f);
                 d.fillColor = (int) mArgb.evaluate(progress(t, D_COLOR_START, D_SHRINK_END,
                         Interpolators.FAST_OUT_SLOW_IN), bgColor, d.inkColor());
                 d.fillAlpha = progress(t, 0f, D_BLOB_IN_END, Interpolators.LINEAR_OUT_SLOW_IN);
@@ -757,34 +797,19 @@ final class MistDropHeadsUpAnimator {
                 float blur = dp(22f) * progress(t, 0f, D_ROW_FADE_END,
                         Interpolators.FAST_OUT_SLOW_IN);
                 transformRow(blob, rowAlpha, blur);
-                return;
+            } else {
+                d.inkAlpha = 1f;
+                hideRow();
             }
 
-            hideRow();
-            float rise = progress(t, D_SHRINK_END, D_RISE_END, Interpolators.FAST_OUT_LINEAR_IN);
-            float absorb = progress(t, D_RISE_END, DISAPPEAR_TOTAL,
-                    Interpolators.FAST_OUT_SLOW_IN);
-            float startCy = s.top + capsuleH / 2f;
-            float hangY = o.cy + o.halfH + dropRadius * 0.9f;
-            float cy = MathUtils.lerp(MathUtils.lerp(startCy, hangY, rise), o.cy, absorb);
-            float cx = MathUtils.lerp(impactX(s), o.cx, rise);
-            float shape = Interpolators.FAST_OUT_SLOW_IN.getInterpolation(
-                    progress(t, D_SHRINK_END, D_SHRINK_END + D_SHAPE_TIME));
-            float jiggle = 0.16f * wobble(t - D_SHRINK_END, D_JIGGLE_PERIOD, D_JIGGLE_DECAY);
-            float halfW = MathUtils.lerp(capsuleW / 2f, dropRadius * 0.92f, shape)
-                    * (1f - jiggle) * (1f - absorb);
-            float halfH = MathUtils.lerp(capsuleH / 2f, dropRadius * 1.15f, shape)
-                    * (1f + jiggle) * (1f - absorb);
-            blob.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
-            d.setShape(blob, Math.min(halfW, halfH), 0f, 0f, 0f);
-            d.inkAlpha = halfW > 0.5f ? 1f : 0f;
-            if (t >= D_NECK_START && halfW > 0.5f) {
-                float neck = progress(t, D_NECK_START, D_RISE_END,
-                        Interpolators.FAST_OUT_SLOW_IN);
-                float waist = Math.min(o.neckWidth(), 2f * halfW) * 0.75f * neck;
+            float neck = progress(t, D_NECK_START, D_NECK_FULL, Interpolators.FAST_OUT_SLOW_IN);
+            if (neck > 0f) {
+                float topY = cy - halfH * 0.5f;
+                float waist = Math.max(dp(0.8f),
+                        Math.min(o.neckWidth(), 2f * halfW) * 0.55f * neck);
                 d.setNeck(o.cx, o.cy, o.neckWidth() * Math.max(d.originScaleX, 0.35f),
-                        cx, cy, Math.min(2f * halfH, 2f * halfW) * 0.8f,
-                        Math.max(waist, dp(0.8f)));
+                        cx, topY, Math.min(2f * halfH, 2f * halfW) * 0.7f * neck + dp(0.8f),
+                        waist);
             }
         }
 

@@ -575,7 +575,9 @@ public class StackStateAnimator {
                     mLogger.logHUNViewAppearing(key);
                     onAnimationEnd = () -> mLogger.appearAnimationEnded(finalKey);
                 }
-                mDropAnimator.startAppear(changingView, onAnimationEnd);
+                mDropAnimator.startAppear(changingView, onAnimationEnd,
+                        getGlobalAnimationFinishedListener());
+                needsCustomAnimation = true;
             } else if (event.animationType == ANIMATION_TYPE_HEADS_UP_APPEAR) {
                 mHeadsUpAppearChildren.add(changingView);
 
