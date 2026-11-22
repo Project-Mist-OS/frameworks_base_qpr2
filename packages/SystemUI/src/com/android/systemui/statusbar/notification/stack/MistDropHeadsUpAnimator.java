@@ -488,6 +488,7 @@ final class MistDropHeadsUpAnimator {
         boolean finished;
         boolean endPending;
         boolean statusBarTouched;
+        boolean colorsRefreshed;
 
         Run(ExpandableView view, View root, boolean appear) {
             this.view = view;
@@ -739,6 +740,12 @@ final class MistDropHeadsUpAnimator {
                             MathUtils.lerp(satY, o.cy + o.halfH * 0.3f, move),
                             size * (1f - 0.25f * elongate), size * (1f + 0.6f * elongate));
                 }
+            }
+
+            if (!colorsRefreshed && t >= A_REVEAL_START
+                    && view instanceof ExpandableNotificationRow) {
+                colorsRefreshed = true;
+                ((ExpandableNotificationRow) view).updateBackgroundColorsOfSelf();
             }
 
             float revealAlpha = progress(t, A_REVEAL_START, A_REVEAL_ALPHA_END,
